@@ -37,6 +37,7 @@ fn test_frame_renders_visible_content() {
         param2: 0.0,
         fps: 60.0,
         z_far_distance: 7.5,
+        view_mode: MiditrailViewMode::Normal,
         ticks_per_second: 960.0,
         _padding1: 0,
     };
@@ -158,6 +159,7 @@ fn test_export_preview_png() {
         param2: 0.0,
         fps: 60.0,
         z_far_distance: 7.5,
+        view_mode: MiditrailViewMode::Normal,
         ticks_per_second: 960.0,
         _padding1: 0,
     };
@@ -276,4 +278,80 @@ fn test_export_preview_png() {
         metadata.len()
     );
     eprintln!("MIDITrail 预览已写入：{}", path.display());
+}
+
+/// Normal / Top 切换不崩溃、不丢状态，且两视图均渲染出可见内容。
+///
+/// 同一渲染器连续渲染两种视图（纹理/管线/实例缓冲复用），
+/// 断言输出纹理始终存在且每帧均有可见像素（切换无黑屏、无状态丢失）。
+#[test]
+fn test_view_switch_renders_both_modes() {
+    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+    let adapter = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
+        .expect("测试需要可用的 wgpu 适配器");
+    let (device, queue) = block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        label: Some("miditrail_switch_device"),
+        required_features: adapter.features() & wgpu::Features::default(),
+        required_limits: wgpu::Limits::default(),
+        memory_hints: wgpu::MemoryHints::default(),
+        trace: wgpu::Trace::Off,
+        experimental_features: wgpu::ExperimentalFeatures::disabled(),
+    }))
+    .expect("请求 wgpu 设备失败");
+
+    let mut renderer = MiditrailRenderer::new(&device);
+    let notes = vec![
+        MiditrailNoteGpu {
+            key: 60,
+            start_tick: 0,
+            end_tick: 12_000,
+            color_packed: 0xFF0000FF,
+            track_idx: 0,
+            velocity: 100,
+            channel: 0,
+            _padding: 0,
+        },
+        MiditrailNoteGpu {
+            key: 64,
+            start_tick: 0,
+            end_tick: 480,
+            color_packed: 0x00FF00FF,
+            track_idx: 0,
+            velocity: 100,
+            channel: 0,
+            _padding: 0,
+        },
+    ];
+    let base = MiditrailUniformGpu {
+        tick: 0,
+        ppq: 480,
+        key_count: 128,
+        frame_width: 320,
+        frame_height: 180,
+        kb_height: 20,
+        _reserved: 0,
+        speed: 1.0,
+        param1: 0.0,
+        param2: 0.0,
+        fps: 60.0,
+        z_far_distance: 7.5,
+        view_mode: MiditrailViewMode::Normal,
+        ticks_per_second: 960.0,
+        _padding1: 0,
+    };
+
+    let normal =
+        super::basic::render_and_count_non_black(&device, &queue, &mut renderer, &base, &notes);
+    assert!(normal > 100, "Normal 视图应有可见像素，实际 {normal}");
+    let top = MiditrailUniformGpu {
+        view_mode: MiditrailViewMode::Top,
+        ..base
+    };
+    let top_count =
+        super::basic::render_and_count_non_black(&device, &queue, &mut renderer, &top, &notes);
+    assert!(top_count > 100, "Top 视图应有可见像素，实际 {top_count}");
+    // 再切回 Normal：复用资源下状态不丢，依然可见。
+    let back =
+        super::basic::render_and_count_non_black(&device, &queue, &mut renderer, &base, &notes);
+    assert!(back > 100, "切回 Normal 后应仍有可见像素，实际 {back}");
 }

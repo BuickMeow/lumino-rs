@@ -1,8 +1,12 @@
 //! Miditrail 3D 渲染管线创建
+//!
+//! Normal 与 Top 视图共用同一实例缓冲布局（见 `miditrail_top.wgsl` 头注释），
+//! 区别仅在于着色器模块（3D 光照 vs flat）与深度写入策略（两者一致：
+//! 音符不写深度、琴键写深度，琴键最后绘制覆盖音符）。
 
 use super::MiditrailInstanceGpu;
 use super::types::{MiditrailAuraInstanceGpu, MiditrailCameraGpu};
-use crate::gpu_resource_tracker::{TrackedBuffer, TrackedTexture};
+use crate::gpu_resource_tracker::TrackedBuffer;
 use crate::pipeline::RenderPipelineBuilder;
 
 pub fn create_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
@@ -72,6 +76,121 @@ pub fn create_note_render_pipeline(
         "miditrail_note_render_pipeline",
         false,
     )
+}
+
+/// 创建 Top 视图琴键渲染管线（flat 着色，写深度，琴键最后绘制覆盖音符）。
+pub fn create_top_render_pipeline(
+    device: &wgpu::Device,
+    bind_group_layout: &wgpu::BindGroupLayout,
+    shader: &wgpu::ShaderModule,
+) -> wgpu::RenderPipeline {
+    create_instanced_pipeline(
+        device,
+        bind_group_layout,
+        shader,
+        "miditrail_top_render_pipeline",
+        true,
+    )
+}
+
+/// 创建 Top 视图音符渲染管线（flat 着色，不写深度，配合画家算法）。
+pub fn create_top_note_render_pipeline(
+    device: &wgpu::Device,
+    bind_group_layout: &wgpu::BindGroupLayout,
+    shader: &wgpu::ShaderModule,
+) -> wgpu::RenderPipeline {
+    create_instanced_pipeline(
+        device,
+        bind_group_layout,
+        shader,
+        "miditrail_top_note_render_pipeline",
+        false,
+    )
+}
+
+/// 创建 GPU-Driven 音符渲染管线（Normal 视图终局路径）。
+///
+/// 与旧 `note_pipeline` 的两处关键差异：
+/// - 实例布局 = `NoteInstance` 原字节（16B：start_length + key_color + border），
+///   位姿由 `miditrail_note_driven.wgsl` 按实例实时推导；
+/// - `depth_write=true`：不透明音符用深度测试解决遮挡，CPU 画家排序删除。
+/// 琴键仍走旧管线最后绘制（compare 已改为 Always，永远置顶，观感不变）。
+pub fn create_note_driven_pipeline(
+    device: &wgpu::Device,
+    bind_group_layout: &wgpu::BindGroupLayout,
+    driven_group_layout: &wgpu::BindGroupLayout,
+    shader: &wgpu::ShaderModule,
+) -> wgpu::RenderPipeline {
+    let pos_normal_layout = wgpu::VertexBufferLayout {
+        array_stride: 24,
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &[
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x3,
+                offset: 0,
+                shader_location: 0,
+            },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x3,
+                offset: 12,
+                shader_location: 1,
+            },
+        ],
+    };
+    // 紧凑实例：vec2(start, length) + u32(key_color) + u32(border)，stride 16。
+    let compact_layout = wgpu::VertexBufferLayout {
+        array_stride: 16,
+        step_mode: wgpu::VertexStepMode::Instance,
+        attributes: &[
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x2,
+                offset: 0,
+                shader_location: 2,
+            },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Uint32,
+                offset: 8,
+                shader_location: 3,
+            },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Uint32,
+                offset: 12,
+                shader_location: 4,
+            },
+        ],
+    };
+
+    RenderPipelineBuilder::new(device, "miditrail_note_driven_pipeline", shader)
+        .bind_group(bind_group_layout)
+        .bind_group(driven_group_layout)
+        .vertex_buffer(pos_normal_layout)
+        .vertex_buffer(compact_layout)
+        .opaque_target(wgpu::TextureFormat::Rgba8Unorm)
+        .depth_stencil(Some(wgpu::DepthStencilState {
+            format: wgpu::TextureFormat::Depth32Float,
+            depth_write_enabled: true,
+            depth_compare: wgpu::CompareFunction::LessEqual,
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }))
+        .build()
+}
+
+/// GPU-Driven 参数组布局（group1：位姿参数＋键位表 uniform，顶点着色器只读）。
+pub fn create_driven_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("miditrail_driven_group_layout"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::VERTEX,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }],
+    })
 }
 
 fn create_instanced_pipeline(
@@ -144,6 +263,8 @@ fn create_instanced_pipeline(
         .depth_stencil(Some(wgpu::DepthStencilState {
             format: wgpu::TextureFormat::Depth32Float,
             depth_write_enabled: depth_write,
+            // 回退到 LessEqual（2026-09-05 driven 实验前的原始状态）：
+            // UI 实测键盘顶层/前面层异常，先恢复最后已知良好状态再查根因。
             depth_compare: wgpu::CompareFunction::LessEqual,
             stencil: wgpu::StencilState::default(),
             bias: wgpu::DepthBiasState::default(),
@@ -263,116 +384,14 @@ pub fn create_buffers(
     (uniform_buffer, vertex_buffer, index_buffer)
 }
 
-pub fn create_aura_buffers(device: &wgpu::Device) -> (TrackedBuffer, TrackedBuffer) {
-    const AURA_VERTICES: [f32; 16] = [
-        -1.0, -1.0, 0.0, 0.0, 1.0, -1.0, 1.0, 0.0, 1.0, 1.0, 1.0, 1.0, -1.0, 1.0, 0.0, 1.0,
-    ];
-    const AURA_INDICES: [u16; 6] = [0, 1, 2, 0, 2, 3];
-
-    let vertex_buffer = TrackedBuffer::new_init(
+/// 音符平面索引缓冲（`QUAD_INDICES`，6×u16 常驻；仅音符 draw 绑定）。
+pub fn create_quad_index_buffer(device: &wgpu::Device, indices: &[u16]) -> TrackedBuffer {
+    TrackedBuffer::new_init(
         device,
         &wgpu::util::BufferInitDescriptor {
-            label: Some("miditrail_aura_vertex_buffer"),
-            contents: bytemuck::cast_slice(&AURA_VERTICES),
-            usage: wgpu::BufferUsages::VERTEX,
-        },
-    );
-
-    let index_buffer = TrackedBuffer::new_init(
-        device,
-        &wgpu::util::BufferInitDescriptor {
-            label: Some("miditrail_aura_index_buffer"),
-            contents: bytemuck::cast_slice(&AURA_INDICES),
+            label: Some("miditrail_quad_index_buffer"),
+            contents: bytemuck::cast_slice(indices),
             usage: wgpu::BufferUsages::INDEX,
         },
-    );
-
-    (vertex_buffer, index_buffer)
-}
-
-pub fn create_aura_sampler(device: &wgpu::Device) -> wgpu::Sampler {
-    device.create_sampler(&wgpu::SamplerDescriptor {
-        label: Some("miditrail_aura_sampler"),
-        address_mode_u: wgpu::AddressMode::ClampToEdge,
-        address_mode_v: wgpu::AddressMode::ClampToEdge,
-        mag_filter: wgpu::FilterMode::Linear,
-        min_filter: wgpu::FilterMode::Linear,
-        ..Default::default()
-    })
-}
-
-pub fn create_aura_texture(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    size: u32,
-    data: &[u8],
-) -> TrackedTexture {
-    let texture = TrackedTexture::new(
-        device,
-        &wgpu::TextureDescriptor {
-            label: Some("miditrail_aura_texture"),
-            size: wgpu::Extent3d {
-                width: size,
-                height: size,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        },
-    );
-    queue.write_texture(
-        wgpu::TexelCopyTextureInfo {
-            texture: texture.inner(),
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-            aspect: wgpu::TextureAspect::All,
-        },
-        data,
-        wgpu::TexelCopyBufferLayout {
-            offset: 0,
-            bytes_per_row: Some(size * 4),
-            rows_per_image: Some(size),
-        },
-        wgpu::Extent3d {
-            width: size,
-            height: size,
-            depth_or_array_layers: 1,
-        },
-    );
-    texture
-}
-
-/// 生成一个软环形 Aura 纹理数据（RGBA8，size x size）。
-pub fn generate_aura_ring_data(size: u32) -> Vec<u8> {
-    let mut data = vec![0u8; (size * size * 4) as usize];
-    let center = (size - 1) as f32 * 0.5;
-    let radius = size as f32 * 0.5;
-    let inner = radius * 0.35;
-    let outer = radius * 0.85;
-
-    for y in 0..size {
-        for x in 0..size {
-            let dx = x as f32 - center;
-            let dy = y as f32 - center;
-            let dist = (dx * dx + dy * dy).sqrt();
-            let alpha = if dist < inner || dist > outer {
-                0.0
-            } else {
-                let mid = (inner + outer) * 0.5;
-                let half = (outer - inner) * 0.5;
-                let t = 1.0 - ((dist - mid) / half).abs();
-                t * t * (3.0 - 2.0 * t)
-            };
-            let idx = ((y * size + x) * 4) as usize;
-            data[idx] = 255;
-            data[idx + 1] = 255;
-            data[idx + 2] = 255;
-            data[idx + 3] = (alpha * 255.0) as u8;
-        }
-    }
-    data
+    )
 }

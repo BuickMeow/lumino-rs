@@ -89,7 +89,9 @@ pub fn update_playback_key_colors(
             // ChunkedList::partition_point(tick+1) = 第一个 tick > tick 的索引
             let end = notes.partition_point(tick.wrapping_add(1));
             state.scan_idx[track_idx] = end;
-            for n in notes.iter().take(end) {
+            // `iter_window(0, end)` 经块偏移直接定位，与 `iter().take(end)` 同集合，
+            // 规避从头平铺扫描（高数据量下每帧 O(前缀) 是已知热点）。
+            for (_, n) in notes.iter_window(0, end) {
                 if n.end_tick > tick {
                     state
                         .active_notes
@@ -111,7 +113,10 @@ pub fn update_playback_key_colors(
             // ChunkedList::partition_point(tick+1) = 第一个 tick > tick 的索引
             let end = notes.partition_point(tick.wrapping_add(1));
             state.scan_idx[track_idx] = end;
-            for n in notes.iter().skip(start).take(end.saturating_sub(start)) {
+            // 增量区间 `[start, end)` 经块偏移直接定位：`iter().skip(start)` 会在
+            // 窗口前平铺丢弃 O(start) 个元素（36% 进度下数百万/轨/帧），`iter_window`
+            // 同集合但 O(log 块数 + 区间)。输出 active_notes 与旧路径逐元素一致。
+            for (_, n) in notes.iter_window(start, end) {
                 if n.end_tick > tick {
                     state
                         .active_notes

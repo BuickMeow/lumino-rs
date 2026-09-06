@@ -43,15 +43,14 @@ impl RunnerInner {
         let lgs_changed = new.synth.lgs_block_size != old.lgs_block_size
             || new.synth.lgs_max_voices_per_key != old.lgs_max_voices_per_key
             || (new.synth.lgs_velocity_filter_threshold != old.lgs_velocity_filter_threshold
-                && (new.synth.backend
-                    == lumino_core::storage::config::SynthBackend::Lgs
-                    || old.preferred_backend
-                        == lumino_core::storage::config::SynthBackend::Lgs));
+                && (new.synth.backend == lumino_core::storage::config::SynthBackend::Lgs
+                    || old.preferred_backend == lumino_core::storage::config::SynthBackend::Lgs));
         // 系统 MIDI (WinMM) 播表（输出设备）变化需要重建 System 输出连接
         let winmm_changed = new.synth.backend == lumino_core::storage::config::SynthBackend::System
             && new.midi.selected_winmm_output != old.system_output_device_id;
         // 音频播放输出设备（CPAL 音频设备）变化需要重建软件合成器（XSynth / LGS）的音频流
-        let audio_output_changed = new.synth.selected_audio_output_device != old.audio_output_device;
+        let audio_output_changed =
+            new.synth.selected_audio_output_device != old.audio_output_device;
         let other_changed = new.display.language != old.language
             || new.editing.selection_box_mode != old.selection_box_mode
             || new.midi.velocity_filter_threshold != old.velocity_filter_threshold

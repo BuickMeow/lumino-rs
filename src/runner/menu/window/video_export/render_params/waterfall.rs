@@ -1,9 +1,14 @@
-//! 瀑布流模式参数
+//! 瀑布流模式参数（产出统一 `note_instances` + 瀑布流 uniforms）
+//!
+//! 单一权威飞行格式：首帧全量收集（`collect_all`，无窗口过滤）并打包为
+//! `NoteInstance`——渲染侧一次上传导出常驻，全局桶建其上；后续帧跳过收集
+//! （`note_instances` 为空）只发 uniforms，窗口过滤走 GPU cull
+//!（与旧窗口收集同谓词、同序，像素等价 harness 保证）。legacy 回退路径
+//!（cull 不可用）消费首帧全量（已排序，回退正确）。
 
-use lumino_extras::palette::current_track_color_f32;
-use lumino_gfx::{RenderParams, WaterfallNoteGpu, pack_color};
+use lumino_gfx::RenderParams;
 
-use super::{WaterfallRenderInput, collect_visible_notes_for_gpu};
+use super::{WaterfallRenderInput, collect_all_notes, pack_note_instances};
 
 /// 瀑布流模式参数
 pub(crate) fn build_waterfall_render_params(input: WaterfallRenderInput) -> RenderParams {
@@ -15,69 +20,39 @@ pub(crate) fn build_waterfall_render_params(input: WaterfallRenderInput) -> Rend
         ppq,
         key_count,
         waterfall_scroll_speed,
+        visible_notes,
+        note_instances_out,
+        window_state,
+        collect_all,
     } = input;
     let waterfall_width = width.max(1) as f32;
     let waterfall_height = height.max(1) as f32;
-    let mut notes = Vec::new();
-    collect_visible_notes_for_gpu(
-        document,
-        tick,
-        ppq,
-        key_count,
-        waterfall_scroll_speed,
-        1.0,
-        &mut notes,
-    );
 
-    let mut waterfall_notes = Vec::with_capacity(notes.len());
-    for n in &notes {
-        let color_packed = pack_color(current_track_color_f32(n.track_idx as usize));
-        waterfall_notes.push(WaterfallNoteGpu {
-            key: n.key as u32,
-            start_tick: n.start_tick,
-            end_tick: n.end_tick,
-            color_packed,
-        });
-    }
+    if collect_all {
+        // 首帧全量：无窗口过滤（cull 在 GPU 侧做），排序 + 打包与窗口路径同函数。
+        let t_collect = std::time::Instant::now();
+        collect_all_notes(document, key_count, visible_notes);
+        let collect_us = t_collect.elapsed().as_micros() as u64;
 
-    // 按 key 计数分桶（O(N)），替代 O(N log N) 全量排序：
-    // 高密集度段落（单帧 10W+ 音符）排序是每帧 CPU 热点，分桶省去 log 因子。
-    // 偏移表语义与原实现一致：`offsets[k]` = 第一个 `key >= k` 的音符索引，
-    // 桶 k 的区间为 `[offsets[k], offsets[k+1])`，空桶区间自然为空。
-    // 桶内按 start_tick 稳定排序（保持同轨收集顺序，叠音颜色与旧实现一致），
-    // 满足 shader 桶内二分回溯的前提。
-    let key_count_usize = key_count as usize;
-    let mut counts = vec![0u32; key_count_usize];
-    for n in &waterfall_notes {
-        counts[n.key as usize] += 1;
+        let t_sort = std::time::Instant::now();
+        super::sort_visible_notes(visible_notes, &mut window_state.sort_scratch);
+        let sort_us = t_sort.elapsed().as_micros() as u64;
+        // 边框仅钢琴卷帘矩形管线使用，瀑布流换算忽略，填 0。
+        let t_pack = std::time::Instant::now();
+        pack_note_instances(visible_notes, 0, note_instances_out);
+        let pack_us = t_pack.elapsed().as_micros() as u64;
+        super::diag_window_collect(
+            "waterfall-full",
+            collect_us,
+            sort_us,
+            pack_us,
+            visible_notes.len(),
+        );
+    } else {
+        // 稳态帧：跳过收集/排序/打包（渲染侧复用 GPU 常驻 + cull），只发 uniforms。
+        visible_notes.clear();
+        note_instances_out.clear();
     }
-    let mut waterfall_key_offsets = vec![0u32; key_count_usize + 1];
-    for k in 0..key_count_usize {
-        waterfall_key_offsets[k + 1] = waterfall_key_offsets[k] + counts[k];
-    }
-    // 稳定分发（保持同轨内 start_tick 序），桶内再按 start_tick 稳定排序
-    let mut sorted_notes = vec![
-        WaterfallNoteGpu {
-            key: 0,
-            start_tick: 0,
-            end_tick: 0,
-            color_packed: 0,
-        };
-        waterfall_notes.len()
-    ];
-    let mut cursor = waterfall_key_offsets[..key_count_usize].to_vec();
-    for n in &waterfall_notes {
-        let k = n.key as usize;
-        sorted_notes[cursor[k] as usize] = *n;
-        cursor[k] += 1;
-    }
-    let mut seg_start = 0usize;
-    for k in 0..key_count_usize {
-        let seg_end = waterfall_key_offsets[k + 1] as usize;
-        sorted_notes[seg_start..seg_end].sort_by_key(|n| n.start_tick);
-        seg_start = seg_end;
-    }
-    waterfall_notes = sorted_notes;
 
     RenderParams {
         viewport_size: (width.max(1), height.max(1)),
@@ -88,9 +63,8 @@ pub(crate) fn build_waterfall_render_params(input: WaterfallRenderInput) -> Rend
         canvas_size: (waterfall_width, waterfall_height),
         is_waterfall_mode: true,
         waterfall_speed: waterfall_scroll_speed.max(0.1),
-        waterfall_notes,
-        waterfall_key_offsets,
         waterfall_current_tick: tick,
+        note_instances: std::mem::take(note_instances_out),
         time_signatures: document.time_signatures.clone(),
         ..Default::default()
     }

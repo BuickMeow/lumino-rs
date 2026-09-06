@@ -624,8 +624,8 @@ mod tests {
         // 绝不能用全量重建绕过。即确认后：note_delta_dirty 必须为 false（不触发
         // force_full_next），且 note_delta_events 携带正确的 InsertAt 增量事件，
         // 文档侧已写入音符。
-        use lumino_message::Tool;
         use crate::tests::test_helpers::seed_notes;
+        use lumino_message::Tool;
 
         let mut editor = Editor::new();
         editor.editor_state.tool = Tool::Text;
@@ -670,8 +670,8 @@ mod tests {
     fn test_text_tool_confirm_rejected_on_conductor_track() {
         // 回归：文字工具不得在非可编辑的 Conductor 音轨（track 0）放置音符，
         // 与铅笔等工具（finish_drawing 的 `current_track == 0` 守卫）保持一致。
-        use lumino_message::Tool;
         use crate::tests::test_helpers::seed_notes;
+        use lumino_message::Tool;
 
         let mut editor = Editor::new();
         editor.editor_state.tool = Tool::Text;
@@ -698,8 +698,8 @@ mod tests {
     fn test_text_tool_press_noop_on_conductor_track() {
         // 回归：文字工具在 Conductor 音轨（track 0）上「整个不可用」——
         // 即便完成「按下 → 释放」整段交互，也不得进入编辑态、不得生成任何音符。
-        use lumino_message::{EditorAction, Point2, Tool};
         use crate::tests::test_helpers::seed_notes;
+        use lumino_message::{EditorAction, Point2, Tool};
 
         let mut editor = Editor::new();
         editor.editor_state.tool = Tool::Text;

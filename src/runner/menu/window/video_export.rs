@@ -31,9 +31,8 @@ pub use midi_console::{
 };
 pub use render_params::RenderParamsInput;
 pub use render_params::SortableNote;
+pub use render_params::WindowCollectState;
 pub(super) use render_params::build_video_export_render_params;
-pub use waterfall_frame::WaterfallFrameInput;
-pub use waterfall_frame::render_waterfall_frame;
 
 use self::waterfall_frame::{DIGIT_H, DIGIT_SPACING, DIGIT_W, draw_digit};
 

@@ -82,22 +82,23 @@ fn test_visible_notes_collection_matches_full_scan() {
     let tick_end = tick_start + 7680;
     const KEY_COUNT: u16 = 128;
 
-    // 窗口版（被测代码）
+    // 窗口版（被测窗口语义：上界二分 + 可见过滤）
     let mut windowed = Vec::new();
-    collect_visible_notes_for_gpu(&doc, tick_start, 480, KEY_COUNT, 1.0, 1.0, &mut windowed);
+    for (track_idx, track_notes) in doc.notes.iter().enumerate() {
+        let (_, search_end) = note_search_bounds(track_notes, tick_start, tick_end);
+        for n in track_notes.iter().take(search_end) {
+            if n.end_tick > tick_start && n.start_tick < tick_end && n.key < KEY_COUNT as u8 {
+                windowed.push((n.key, n.start_tick, n.end_tick, track_idx as u16));
+            }
+        }
+    }
 
     // 全量遍历版（参考实现）
     let mut full = Vec::new();
     for (track_idx, track_notes) in doc.notes.iter().enumerate() {
         for n in track_notes {
             if n.end_tick > tick_start && n.start_tick < tick_end && n.key < KEY_COUNT as u8 {
-                full.push(GpuVisibleNote {
-                    key: n.key,
-                    start_tick: n.start_tick,
-                    end_tick: n.end_tick,
-                    track_idx: track_idx as u16,
-                    velocity: n.velocity,
-                });
+                full.push((n.key, n.start_tick, n.end_tick, track_idx as u16));
             }
         }
     }
@@ -107,300 +108,211 @@ fn test_visible_notes_collection_matches_full_scan() {
     assert_eq!(windowed.len(), 4);
 }
 
-/// 分桶偏移表正确性：偏移表将音符按 key 分组，桶区间非重叠且覆盖全部音符。
-/// 覆盖：空桶、稀疏 key、连续 key、哨兵偏移。
-fn build_offsets(notes: &[lumino_gfx::WaterfallNoteGpu], key_count: u16) -> Vec<u32> {
-    let mut sorted = notes.to_vec();
-    sorted.sort_by(|a, b| a.key.cmp(&b.key).then(a.start_tick.cmp(&b.start_tick)));
-    let mut offsets = vec![0u32; key_count as usize + 1];
-    let mut idx = 0usize;
-    for (k, slot) in offsets.iter_mut().enumerate() {
-        while idx < sorted.len() && sorted[idx].key < k as u32 {
-            idx += 1;
-        }
-        *slot = idx as u32;
-    }
-    // 校验排序后的桶区间
-    for k in 0..key_count as u32 {
-        let start = offsets[k as usize] as usize;
-        let end = offsets[k as usize + 1] as usize;
-        for n in &sorted[start..end] {
-            assert_eq!(n.key, k, "桶 {k} 包含错误 key 的音符");
-        }
-    }
-    assert_eq!(offsets[key_count as usize] as usize, sorted.len());
-    offsets
-}
-
+// 注：`collect_window_notes` 已随 GPU cull 删除，其滑动收集测试同步删除
+//（git 历史可查）；窗口语义等价性由 `lumino-gfx` 的 `global_bucket::cull_tests`
+// + 像素 harness 保证。
 #[test]
-fn test_waterfall_key_offsets_partition() {
-    // 稀疏 key：0、1、3（2 为空桶）、127
-    let notes = vec![
-        lumino_gfx::WaterfallNoteGpu {
-            key: 127,
-            start_tick: 100,
-            end_tick: 200,
-            color_packed: 0,
-        },
-        lumino_gfx::WaterfallNoteGpu {
-            key: 0,
-            start_tick: 300,
-            end_tick: 400,
-            color_packed: 0,
-        },
-        lumino_gfx::WaterfallNoteGpu {
-            key: 3,
-            start_tick: 50,
-            end_tick: 150,
-            color_packed: 0,
-        },
-        lumino_gfx::WaterfallNoteGpu {
-            key: 1,
-            start_tick: 10,
-            end_tick: 20,
-            color_packed: 0,
-        },
-    ];
-    let key_count = 128u16;
-    let offsets = build_offsets(&notes, key_count);
-
-    // 桶 0/1/3 各 1 个音符，桶 2 为空
-    assert_eq!(offsets[0], 0);
-    assert_eq!(offsets[1], 1);
-    assert_eq!(offsets[2], 2, "空桶 2 应与桶 1 末尾对齐");
-    assert_eq!(offsets[3], 2);
-    assert_eq!(offsets[4], 3);
-    // 哨兵：全部音符数
-    assert_eq!(offsets[128], 4);
-}
-
-#[test]
-fn test_waterfall_key_offsets_empty_and_single() {
-    // 空音符：全 0
-    let offsets = build_offsets(&[], 88);
-    assert!(offsets.iter().all(|&o| o == 0));
-    assert_eq!(offsets.len(), 89);
-
-    // 单 key 连续多个音符
-    let notes: Vec<lumino_gfx::WaterfallNoteGpu> = (0..5)
-        .map(|i| lumino_gfx::WaterfallNoteGpu {
-            key: 60,
-            start_tick: i * 100,
-            end_tick: i * 100 + 50,
-            color_packed: 0,
-        })
-        .collect();
-    let offsets = build_offsets(&notes, 88);
-    assert_eq!(offsets[60], 0);
-    assert_eq!(offsets[61], 5);
-    // 前面的 key 全部为空桶
-    assert_eq!(offsets[0], 0);
-    assert_eq!(offsets[59], 0);
-}
-
-/// 等价性护栏：计数分桶排序 + 偏移表必须与旧 O(N log N) 全量排序 + 扫描偏移完全一致。
-/// 覆盖：多 key 交错、同 key 乱序 start_tick、空 key 桶、叠音。
-#[test]
-fn test_waterfall_bucket_sort_matches_full_sort() {
-    const KEY_COUNT: u16 = 128;
-    // 确定性伪随机（xorshift64*），避免依赖外部 rng crate
-    let mut state = 0x9E37_79B9_7F4A_7C15u64;
-    let mut next = move || {
-        state ^= state >> 12;
-        state ^= state << 25;
-        state ^= state >> 27;
-        state.wrapping_mul(0x2545_F491_4F6C_DD1D)
-    };
-
-    // 构造乱序输入：key 0-127 稀疏分布，start_tick 乱序，含叠音（同 key 同 start）
-    let input: Vec<lumino_gfx::WaterfallNoteGpu> = (0..20_000)
-        .map(|i| {
-            let key = (next() % KEY_COUNT as u64) as u32;
-            let start_tick = if i % 997 == 0 {
-                // 人为制造叠音：同 key 同 start_tick
-                (next() % 50_000) as u32
-            } else {
-                (next() % 100_000) as u32
-            };
-            lumino_gfx::WaterfallNoteGpu {
-                key,
-                start_tick,
-                end_tick: start_tick + 240,
-                color_packed: 0,
-            }
-        })
-        .collect();
-
-    // 旧实现：全量稳定排序
-    let expected = {
-        let mut v = input.clone();
-        v.sort_by(|a, b| a.key.cmp(&b.key).then(a.start_tick.cmp(&b.start_tick)));
-        v
-    };
-    // 新实现：计数分桶 + 桶内稳定排序
-    let key_count_usize = KEY_COUNT as usize;
-    let mut counts = vec![0u32; key_count_usize];
-    for n in input.iter() {
-        counts[n.key as usize] += 1;
-    }
-    let mut offsets = vec![0u32; key_count_usize + 1];
-    for k in 0..key_count_usize {
-        offsets[k + 1] = offsets[k] + counts[k];
-    }
-    let mut sorted = vec![
-        lumino_gfx::WaterfallNoteGpu {
-            key: 0,
-            start_tick: 0,
-            end_tick: 0,
-            color_packed: 0,
-        };
-        input.len()
-    ];
-    let mut cursor = offsets[..key_count_usize].to_vec();
-    for n in input.iter() {
-        let k = n.key as usize;
-        sorted[cursor[k] as usize] = *n;
-        cursor[k] += 1;
-    }
-    let mut seg_start = 0usize;
-    for k in 0..key_count_usize {
-        let seg_end = offsets[k + 1] as usize;
-        sorted[seg_start..seg_end].sort_by_key(|n| n.start_tick);
-        seg_start = seg_end;
-    }
-
+fn test_resolve_miditrail_speed_isolated_per_view() {
     assert_eq!(
-        tuple_of(&sorted),
-        tuple_of(&expected),
-        "计数分桶排序结果与全量稳定排序不一致"
+        resolve_miditrail_speed(MiditrailViewMode::Normal, 2.0, 5.0),
+        2.0,
+        "Normal 应取 Normal 速度"
     );
-
-    // 偏移表语义：offsets[k] = 第一个 key >= k 的音符索引（与扫描实现一致）
-    let mut ref_offsets = vec![0u32; key_count_usize + 1];
-    {
-        let mut idx = 0usize;
-        for (k, slot) in ref_offsets.iter_mut().enumerate() {
-            while idx < expected.len() && (expected[idx].key as usize) < k {
-                idx += 1;
-            }
-            *slot = idx as u32;
-        }
-    }
-    assert_eq!(offsets, ref_offsets, "计数分桶偏移表与扫描偏移表不一致");
-
-    // 桶区间不重叠且覆盖全部音符（哨兵校验）
-    for k in 0..KEY_COUNT as u32 {
-        let start = offsets[k as usize] as usize;
-        let end = offsets[k as usize + 1] as usize;
-        for n in &sorted[start..end] {
-            assert_eq!(n.key, k, "桶 {k} 包含错误 key 的音符");
-        }
-    }
-    assert_eq!(offsets[KEY_COUNT as usize] as usize, sorted.len());
-
-    // 确保输入未被意外修改（函数应只排序，不改变元素内容）
-    let mut reconstituted = sorted.clone();
-    reconstituted.sort_by_key(|n| (n.key, n.start_tick));
-    let mut input_sorted = input.clone();
-    input_sorted.sort_by_key(|n| (n.key, n.start_tick));
     assert_eq!(
-        tuple_of(&reconstituted),
-        tuple_of(&input_sorted),
-        "元素内容在排序中被改变"
+        resolve_miditrail_speed(MiditrailViewMode::Top, 2.0, 5.0),
+        5.0,
+        "Top 应取 Top 速度"
+    );
+    // 下限钳制（与旧 waterfall_scroll_speed.max(0.1) 语义一致）。
+    assert_eq!(
+        resolve_miditrail_speed(MiditrailViewMode::Top, 1.0, 0.0),
+        0.1
     );
 }
 
-/// WaterfallNoteGpu 无 PartialEq，转为字段元组比较
-fn tuple_of(v: &[lumino_gfx::WaterfallNoteGpu]) -> Vec<(u32, u32, u32, u32)> {
-    v.iter()
-        .map(|n| (n.key, n.start_tick, n.end_tick, n.color_packed))
-        .collect()
-}
-
-/// 性能对比：计数分桶 vs 全量排序 + 扫描偏移（高密集度段落，release 下运行）
-/// 运行：`cargo test --release test_waterfall_bucket_sort_bench -- --nocapture`
+/// 视图枚举解析：UI 字符串 → 强类型（非法值回退 Normal，不静默产生第三种状态）。
 #[test]
-fn test_waterfall_bucket_sort_bench() {
-    use std::time::Instant;
-    const KEY_COUNT: u16 = 128;
-    // 10 万音符密集段（模拟高密度段落的视口负载）
-    const N: usize = 100_000;
-    let mut state = 0x9E37_79B9_7F4A_7C15u64;
-    let mut next = move || {
-        state ^= state >> 12;
-        state ^= state << 25;
-        state ^= state >> 27;
-        state.wrapping_mul(0x2545_F491_4F6C_DD1D)
-    };
-    let input: Vec<lumino_gfx::WaterfallNoteGpu> = (0..N)
-        .map(|_| lumino_gfx::WaterfallNoteGpu {
-            key: (next() % KEY_COUNT as u64) as u32,
-            start_tick: (next() % 1_000_000) as u32,
-            end_tick: 0,
-            color_packed: 0,
-        })
-        .collect();
-
-    let mut t_sort = 0u64;
-    let mut t_bucket = 0u64;
-    const ITERS: u32 = 20;
-    for _ in 0..ITERS {
-        // 旧实现：全量稳定排序 + 扫描偏移表
-        let mut v = input.clone();
-        let t0 = Instant::now();
-        v.sort_by(|a, b| a.key.cmp(&b.key).then(a.start_tick.cmp(&b.start_tick)));
-        let mut offsets = vec![0u32; KEY_COUNT as usize + 1];
-        let mut idx = 0usize;
-        for (k, slot) in offsets.iter_mut().enumerate() {
-            while idx < v.len() && v[idx].key < k as u32 {
-                idx += 1;
-            }
-            *slot = idx as u32;
-        }
-        t_sort += t0.elapsed().as_micros() as u64;
-        std::hint::black_box((v, offsets));
-    }
-    for _ in 0..ITERS {
-        // 新实现：计数分桶 + 桶内排序（偏移表即分桶结果）
-        let v = input.clone();
-        let t0 = Instant::now();
-        let key_count_usize = KEY_COUNT as usize;
-        let mut counts = vec![0u32; key_count_usize];
-        for n in v.iter() {
-            counts[n.key as usize] += 1;
-        }
-        let mut offsets = vec![0u32; key_count_usize + 1];
-        for k in 0..key_count_usize {
-            offsets[k + 1] = offsets[k] + counts[k];
-        }
-        let mut sorted = vec![
-            lumino_gfx::WaterfallNoteGpu {
-                key: 0,
-                start_tick: 0,
-                end_tick: 0,
-                color_packed: 0,
-            };
-            v.len()
-        ];
-        let mut cursor = offsets[..key_count_usize].to_vec();
-        for n in v.iter() {
-            let k = n.key as usize;
-            sorted[cursor[k] as usize] = *n;
-            cursor[k] += 1;
-        }
-        let mut seg_start = 0usize;
-        for k in 0..key_count_usize {
-            let seg_end = offsets[k + 1] as usize;
-            sorted[seg_start..seg_end].sort_by_key(|n| n.start_tick);
-            seg_start = seg_end;
-        }
-        t_bucket += t0.elapsed().as_micros() as u64;
-        std::hint::black_box((sorted, offsets));
-    }
-    eprintln!(
-        "[waterfall_bench] N={N} 全量排序+扫描 {:.2}ms | 计数分桶 {:.2}ms | 加速 {:.1}x",
-        t_sort as f64 / ITERS as f64 / 1000.0,
-        t_bucket as f64 / ITERS as f64 / 1000.0,
-        t_sort as f64 / t_bucket as f64
+fn test_miditrail_view_mode_from_str() {
+    use std::str::FromStr;
+    assert_eq!(
+        MiditrailViewMode::from_str("Top").expect("Top 应可解析"),
+        MiditrailViewMode::Top
     );
+    assert_eq!(
+        MiditrailViewMode::from_str("普通").expect("普通应可解析"),
+        MiditrailViewMode::Normal
+    );
+    assert!(MiditrailViewMode::from_str("侧视").is_err());
+}
+
+/// 首帧全量 + 稳态跳过（瀑布流）：`collect_all=true` 发全文档有序集（无窗口过滤，
+/// 越界 key 除外），`false` 发空集 + uniforms（渲染侧复用 GPU 常驻 + cull）。
+#[test]
+fn test_waterfall_collect_all_first_frame_full_then_skip() {
+    let doc = MidiDocument {
+        next_note_id: 1,
+        notes: vec![
+            lumino_midi_loader::ChunkedList::from_sorted(make_track(&[
+                (0, 240, 60),               // 视口前很远（窗口会过滤，全量保留）
+                (5_000_100, 5_001_000, 62), // 视口内
+                (9_000_000, 9_000_480, 64), // 视口后很远（窗口会过滤，全量保留）
+                (100, 200, 200),            // 越界 key，全量也过滤
+            ])),
+            lumino_midi_loader::ChunkedList::from_sorted(make_track(&[(5_000_200, 5_000_700, 60)])),
+        ],
+        tempo_changes: vec![(0, 120.0)],
+        time_signatures: vec![(0, 4, 4)],
+        key_signatures: vec![(0, 0, false)],
+        control_events: lumino_midi_loader::ChunkedList::new(),
+        lyrics: vec![],
+        markers: vec![],
+        sys_ex: vec![],
+        track_names: vec![Some("T1".into()), Some("T2".into())],
+        total_ticks: 9_000_480,
+        track_count: 2,
+        tracks: TrackManager::new(2),
+        division: 480,
+        track_ports: vec![],
+        track_max_end_ticks: vec![],
+    };
+    let mut visible = Vec::new();
+    let mut out = Vec::new();
+    let mut state = WindowCollectState::default();
+
+    // 首帧：全量 4 个有效音符（越界 key 已滤），(key, start) 有序。
+    let params = build_waterfall_render_params(WaterfallRenderInput {
+        width: 640,
+        height: 360,
+        tick: 5_000_000,
+        document: &doc,
+        ppq: 480,
+        key_count: 128,
+        waterfall_scroll_speed: 1.0,
+        visible_notes: &mut visible,
+        note_instances_out: &mut out,
+        window_state: &mut state,
+        collect_all: true,
+    });
+    assert!(params.is_waterfall_mode, "瀑布流标志");
+    assert_eq!(
+        params.note_instances.len(),
+        4,
+        "首帧全量：不过滤窗口（视口前后 + 跨视口全保留），只滤越界 key"
+    );
+    let keys_starts: Vec<(u32, f32)> = params
+        .note_instances
+        .iter()
+        .map(|n| (n.key_color & 0xFF, n.start_length[0]))
+        .collect();
+    let mut sorted = keys_starts.clone();
+    sorted.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.total_cmp(&b.1)));
+    assert_eq!(
+        keys_starts, sorted,
+        "全量集须 (key, start) 有序（legacy 回退前提）"
+    );
+
+    // 稳态帧：空集 + uniforms（tick 照常推进）。
+    let params2 = build_waterfall_render_params(WaterfallRenderInput {
+        width: 640,
+        height: 360,
+        tick: 5_000_100,
+        document: &doc,
+        ppq: 480,
+        key_count: 128,
+        waterfall_scroll_speed: 1.0,
+        visible_notes: &mut visible,
+        note_instances_out: &mut out,
+        window_state: &mut state,
+        collect_all: false,
+    });
+    assert!(
+        params2.note_instances.is_empty(),
+        "稳态帧跳过收集（渲染侧 cull）"
+    );
+    assert_eq!(
+        params2.waterfall_current_tick, 5_000_100,
+        "uniforms 照常推进"
+    );
+}
+
+/// 首帧全量 + 稳态跳过（Miditrail）：语义同瀑布流，uniforms 含 3D 参数。
+#[test]
+fn test_miditrail_collect_all_first_frame_full_then_skip() {
+    let doc = MidiDocument {
+        next_note_id: 1,
+        notes: vec![lumino_midi_loader::ChunkedList::from_sorted(make_track(&[
+            (0, 240, 60),
+            (5_000_100, 5_001_000, 62),
+            (9_000_000, 9_000_480, 64),
+        ]))],
+        tempo_changes: vec![(0, 120.0)],
+        time_signatures: vec![(0, 4, 4)],
+        key_signatures: vec![(0, 0, false)],
+        control_events: lumino_midi_loader::ChunkedList::new(),
+        lyrics: vec![],
+        markers: vec![],
+        sys_ex: vec![],
+        track_names: vec![Some("T1".into())],
+        total_ticks: 9_000_480,
+        track_count: 1,
+        tracks: TrackManager::new(1),
+        division: 480,
+        track_ports: vec![],
+        track_max_end_ticks: vec![],
+    };
+    let mut visible = Vec::new();
+    let mut out = Vec::new();
+    let mut state = WindowCollectState::default();
+
+    let params = build_miditrail_render_params(MiditrailRenderInput {
+        width: 640,
+        height: 360,
+        tick: 5_000_000,
+        document: &doc,
+        ppq: 480,
+        key_count: 128,
+        miditrail_speed: 1.0,
+        miditrail_view_mode: lumino_message::events::window::video::MiditrailViewMode::Normal,
+        miditrail_z_far: 7.5,
+        miditrail_3d_notes: false,
+        fps: 60.0,
+        visible_notes: &mut visible,
+        note_instances_out: &mut out,
+        window_state: &mut state,
+        collect_all: true,
+    });
+    assert!(params.miditrail_enabled, "3D 标志");
+    assert!(
+        !params.miditrail_3d_notes,
+        "开关默认关闭（平面）透传渲染参数"
+    );
+    assert_eq!(params.note_instances.len(), 3, "首帧全量：视口前后全保留");
+    assert!(
+        params.miditrail_ticks_per_second > 0.0,
+        "光晕时间基准照常计算"
+    );
+
+    let params2 = build_miditrail_render_params(MiditrailRenderInput {
+        width: 640,
+        height: 360,
+        tick: 5_000_100,
+        document: &doc,
+        ppq: 480,
+        key_count: 128,
+        miditrail_speed: 1.0,
+        miditrail_view_mode: lumino_message::events::window::video::MiditrailViewMode::Normal,
+        miditrail_z_far: 7.5,
+        miditrail_3d_notes: true,
+        fps: 60.0,
+        visible_notes: &mut visible,
+        note_instances_out: &mut out,
+        window_state: &mut state,
+        collect_all: false,
+    });
+    assert!(
+        params2.note_instances.is_empty(),
+        "稳态帧跳过收集（渲染侧 cull + 回读）"
+    );
+    assert!(params2.miditrail_3d_notes, "开关打开（盒子）透传渲染参数");
+    assert_eq!(params2.miditrail_current_tick, 5_000_100);
 }

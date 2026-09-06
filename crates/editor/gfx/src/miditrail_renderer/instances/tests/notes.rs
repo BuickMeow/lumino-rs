@@ -33,7 +33,15 @@ fn test_note_instances_sorted_by_depth() {
         },
     ];
     let mut out = Vec::new();
-    build_note_instances(&uniform, &notes, &positions, &widths, &mut out);
+    let mut scratch = NoteBuildScratch::default();
+    build_note_instances(
+        &uniform,
+        &notes,
+        &positions,
+        &widths,
+        &mut out,
+        &mut scratch,
+    );
     assert_eq!(out.len(), 2);
     let front_z = |i: &MiditrailInstanceGpu| i.translation[2] + i.scale[2];
     assert!(
@@ -74,7 +82,15 @@ fn test_note_instances_grouped_by_key_color() {
         },
     ];
     let mut out = Vec::new();
-    build_note_instances(&uniform, &notes, &positions, &widths, &mut out);
+    let mut scratch = NoteBuildScratch::default();
+    build_note_instances(
+        &uniform,
+        &notes,
+        &positions,
+        &widths,
+        &mut out,
+        &mut scratch,
+    );
     assert_eq!(out.len(), 2);
 
     let white_left = positions[60] + widths[60] * 0.04;
@@ -116,7 +132,15 @@ fn test_note_instances_clipped_at_z_far_distance() {
         _padding: 0,
     }];
     let mut out = Vec::new();
-    build_note_instances(&uniform, &notes, &positions, &widths, &mut out);
+    let mut scratch = NoteBuildScratch::default();
+    build_note_instances(
+        &uniform,
+        &notes,
+        &positions,
+        &widths,
+        &mut out,
+        &mut scratch,
+    );
     assert_eq!(out.len(), 1);
     // 立方体锚定在 translation，向 +Z 方向延伸 scale[2]，因此后端直接为 translation[2]。
     let back_z = out[0].translation[2];
@@ -183,9 +207,24 @@ fn test_note_instances_window_scale_equivalence() {
     assert!(notes_1x.len() < notes.len(), "1.0× 窗口应裁剪掉部分音符");
 
     let mut out_full = Vec::new();
-    build_note_instances(&uniform, &notes, &positions, &widths, &mut out_full);
+    let mut scratch = NoteBuildScratch::default();
+    build_note_instances(
+        &uniform,
+        &notes,
+        &positions,
+        &widths,
+        &mut out_full,
+        &mut scratch,
+    );
     let mut out_1x = Vec::new();
-    build_note_instances(&uniform, &notes_1x, &positions, &widths, &mut out_1x);
+    build_note_instances(
+        &uniform,
+        &notes_1x,
+        &positions,
+        &widths,
+        &mut out_1x,
+        &mut scratch,
+    );
 
     assert_eq!(
         out_1x.len(),

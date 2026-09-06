@@ -20,8 +20,8 @@ use std::path::PathBuf;
 
 use lumino_export::midi::{
     MidiControlChangeEvent, MidiExportData, MidiExportOptions, MidiKeySignatureEvent,
-    MidiNoteEvent, MidiPitchBendEvent, MidiProgramChangeEvent, MidiTempoEvent, MidiTimeSignatureEvent, MidiTrackData,
-    export_midi_to_bytes,
+    MidiNoteEvent, MidiPitchBendEvent, MidiProgramChangeEvent, MidiTempoEvent,
+    MidiTimeSignatureEvent, MidiTrackData, export_midi_to_bytes,
 };
 use lumino_midi_loader::{MidiDocument, bpm_to_tempo};
 use midly::{MetaMessage, TrackEventKind};

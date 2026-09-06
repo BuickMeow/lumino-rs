@@ -85,10 +85,7 @@ impl RunnerInner {
 
         // 保存确认对话框被窗口 X 关闭（未点击任何按钮）→ 视为「取消」关闭操作，
         // 清空挂起的关闭动作，避免后续关闭请求被忽略。
-        if dialog_result.is_none()
-            && should_close
-            && dialog_type == Some(DialogType::SaveConfirm)
-        {
+        if dialog_result.is_none() && should_close && dialog_type == Some(DialogType::SaveConfirm) {
             tracing::debug!("保存确认对话框被 X 关闭，视为取消");
             self.handle_save_confirm_result(SaveConfirmAction::Cancel);
         }

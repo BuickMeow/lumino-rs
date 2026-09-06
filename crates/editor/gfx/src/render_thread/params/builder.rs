@@ -3,7 +3,7 @@
 use super::RenderParams;
 use crate::{
     ArrangementNoteInstance, ArrangementNoteUniform, ArrangementUniform, CcBarInstance,
-    GridLineInstance, MiditrailNoteGpu, RulerTickInstance, WaterfallNoteGpu,
+    GridLineInstance, RulerTickInstance, miditrail_renderer::MiditrailViewMode,
 };
 
 /// [`RenderParams`] 的 Builder。
@@ -45,14 +45,13 @@ pub struct RenderParamsBuilder {
     time_signatures: Vec<(u32, u8, u8)>,
     is_waterfall_mode: bool,
     waterfall_speed: f32,
-    waterfall_notes: Vec<WaterfallNoteGpu>,
-    waterfall_key_offsets: Vec<u32>,
     waterfall_current_tick: u32,
     miditrail_enabled: bool,
     miditrail_speed: f32,
-    miditrail_notes: Vec<MiditrailNoteGpu>,
+    miditrail_view_mode: MiditrailViewMode,
     miditrail_current_tick: u32,
     miditrail_z_far: f32,
+    miditrail_3d_notes: bool,
     miditrail_ticks_per_second: f32,
     fps: f32,
     skip_scene_render: bool,
@@ -99,14 +98,13 @@ impl Default for RenderParamsBuilder {
             time_signatures: base.time_signatures,
             is_waterfall_mode: base.is_waterfall_mode,
             waterfall_speed: base.waterfall_speed,
-            waterfall_notes: base.waterfall_notes,
-            waterfall_key_offsets: base.waterfall_key_offsets,
             waterfall_current_tick: base.waterfall_current_tick,
             miditrail_enabled: base.miditrail_enabled,
             miditrail_speed: base.miditrail_speed,
-            miditrail_notes: base.miditrail_notes,
+            miditrail_view_mode: base.miditrail_view_mode,
             miditrail_current_tick: base.miditrail_current_tick,
             miditrail_z_far: base.miditrail_z_far,
+            miditrail_3d_notes: base.miditrail_3d_notes,
             miditrail_ticks_per_second: base.miditrail_ticks_per_second,
             fps: base.fps,
             skip_scene_render: base.skip_scene_render,
@@ -206,12 +204,6 @@ impl RenderParamsBuilder {
         self
     }
 
-    /// 设置网格线实例
-    pub fn grid_instances(mut self, instances: Vec<GridLineInstance>) -> Self {
-        self.grid_instances = instances;
-        self
-    }
-
     /// 设置标尺刻度实例
     pub fn ruler_instances(mut self, instances: Vec<RulerTickInstance>) -> Self {
         self.ruler_instances = instances;
@@ -263,18 +255,6 @@ impl RenderParamsBuilder {
         self
     }
 
-    /// 设置音轨总览模式：文档音轨 → 泳道序号 映射
-    pub fn arrangement_lane_index(mut self, lane_index: Vec<f32>) -> Self {
-        self.arrangement_lane_index = lane_index;
-        self
-    }
-
-    /// 设置音轨总览模式：音符着色器 uniform
-    pub fn arrangement_note_uniform(mut self, uniform: ArrangementNoteUniform) -> Self {
-        self.arrangement_note_uniform = uniform;
-        self
-    }
-
     /// 设置音轨总览模式 uniform
     pub fn arrangement_uniform(mut self, uniform: ArrangementUniform) -> Self {
         self.arrangement_uniform = uniform;
@@ -308,18 +288,6 @@ impl RenderParamsBuilder {
     /// 设置拍号变化列表
     pub fn time_signatures(mut self, time_signatures: Vec<(u32, u8, u8)>) -> Self {
         self.time_signatures = time_signatures;
-        self
-    }
-
-    /// 设置目标帧率（用于动画时间步长）。
-    pub fn fps(mut self, fps: f32) -> Self {
-        self.fps = fps;
-        self
-    }
-
-    /// 设置 Miditrail 光晕环动画时间基准（每秒 tick 数；0 表示由渲染线程回退估算）。
-    pub fn miditrail_ticks_per_second(mut self, ticks_per_second: f32) -> Self {
-        self.miditrail_ticks_per_second = ticks_per_second;
         self
     }
 
@@ -383,14 +351,13 @@ impl RenderParamsBuilder {
             time_signatures: self.time_signatures,
             is_waterfall_mode: self.is_waterfall_mode,
             waterfall_speed: self.waterfall_speed,
-            waterfall_notes: self.waterfall_notes,
-            waterfall_key_offsets: self.waterfall_key_offsets,
             waterfall_current_tick: self.waterfall_current_tick,
             miditrail_enabled: self.miditrail_enabled,
             miditrail_speed: self.miditrail_speed,
-            miditrail_notes: self.miditrail_notes,
+            miditrail_view_mode: self.miditrail_view_mode,
             miditrail_current_tick: self.miditrail_current_tick,
             miditrail_z_far: self.miditrail_z_far,
+            miditrail_3d_notes: self.miditrail_3d_notes,
             miditrail_ticks_per_second: self.miditrail_ticks_per_second,
             fps: self.fps,
             skip_scene_render: self.skip_scene_render,

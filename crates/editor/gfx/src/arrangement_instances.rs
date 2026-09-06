@@ -92,7 +92,9 @@ pub fn build_arrangement_overlay_back(
     let coy = viewport.canvas_offset[1];
 
     // ── 1. 背景 ──
-    out.push(ArrangementNoteInstance::background(cox, coy, w, h, colors.bg));
+    out.push(ArrangementNoteInstance::background(
+        cox, coy, w, h, colors.bg,
+    ));
 
     if nt == 0 {
         return;
@@ -120,16 +122,17 @@ pub fn build_arrangement_overlay_back(
     // ── 3. 网格线（按拍号变化，与标尺/真实小节边界一致）──
     let ts = (viewport.scroll_x / ppu) as u32;
     let te = ((viewport.scroll_x + w) / ppu) as u32;
-    for tick in crate::grid::measure_line_ticks(
-        ts,
-        te,
-        viewport.ppq as u32,
-        params.time_signatures,
-    ) {
+    for tick in crate::grid::measure_line_ticks(ts, te, viewport.ppq as u32, params.time_signatures)
+    {
         let screen_x = tick_to_x(viewport, tick as f64);
         if screen_x >= cox && screen_x <= cox + w {
             out.push(ArrangementNoteInstance::grid_line(
-                screen_x, coy, 1.0, h, colors.measure_line, tick,
+                screen_x,
+                coy,
+                1.0,
+                h,
+                colors.measure_line,
+                tick,
             ));
         }
     }
@@ -193,7 +196,11 @@ pub fn build_arrangement_overlay_front(
             let sw = ((*end - *start) as f32) * ppu;
             let sy = lane_y + lh * 0.5 - 2.0;
             out.push(ArrangementNoteInstance::ghost_note(
-                sx, sy, sw.max(2.0), 4.0, ghost_color,
+                sx,
+                sy,
+                sw.max(2.0),
+                4.0,
+                ghost_color,
             ));
         }
     }
@@ -203,7 +210,11 @@ pub fn build_arrangement_overlay_front(
         let cx = tick_to_x(viewport, params.playback_position as f64);
         if cx >= cox && cx <= cox + w {
             out.push(ArrangementNoteInstance::playhead(
-                cx, coy, 2.0, h, colors.playhead,
+                cx,
+                coy,
+                2.0,
+                h,
+                colors.playhead,
             ));
         }
     }

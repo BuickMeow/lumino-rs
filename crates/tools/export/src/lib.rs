@@ -31,16 +31,16 @@ pub mod waterfall_export;
 
 /// 音频编码器类型
 pub use audio::codec::AudioCodec;
-/// 音频渲染配置
-pub use audio::config::{AudioBackendKind, AudioRenderConfig};
 /// 进度回调类型
 pub use audio::config::ProgressCallback;
+/// 音频渲染配置
+pub use audio::config::{AudioBackendKind, AudioRenderConfig};
+/// GPU 后端检测
+pub use audio::gpu_backend::is_gpu_available;
 /// 音频渲染（基于 xsynth / GPU）—— 流式模式
 pub use audio::render_audio;
 /// 音频渲染（基于 xsynth / GPU）—— 内存模式
 pub use audio::render_audio_from_document;
-/// GPU 后端检测
-pub use audio::gpu_backend::is_gpu_available;
 
 // ── 视频导出 ──
 

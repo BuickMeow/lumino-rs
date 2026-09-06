@@ -62,10 +62,18 @@ fn test_miditrail_instances_bench() {
     );
 
     // 热身
+    let mut scratch = NoteBuildScratch::default();
     for _ in 0..3 {
         let active_keys = compute_active_keys(uniform.tick, &notes_1x);
         let mut out = Vec::with_capacity(notes_1x.len());
-        build_note_instances(&uniform, &notes_1x, &positions, &widths, &mut out);
+        build_note_instances(
+            &uniform,
+            &notes_1x,
+            &positions,
+            &widths,
+            &mut out,
+            &mut scratch,
+        );
         std::hint::black_box((active_keys, out));
     }
 
@@ -77,6 +85,7 @@ fn test_miditrail_instances_bench() {
     let mut t_sort = 0u64;
     let mut t_sort_x_total = 0u64;
     let mut t_sort_s_total = 0u64;
+    let mut scratch = NoteBuildScratch::default();
     for _ in 0..ITERS {
         let t0 = Instant::now();
         let active_keys = compute_active_keys(uniform.tick, &notes);
@@ -85,13 +94,27 @@ fn test_miditrail_instances_bench() {
         // 旧行为：2.0× 窗口全量输入
         let t1 = Instant::now();
         let mut out = Vec::with_capacity(notes.len());
-        build_note_instances(&uniform, &notes, &positions, &widths, &mut out);
+        build_note_instances(
+            &uniform,
+            &notes,
+            &positions,
+            &widths,
+            &mut out,
+            &mut scratch,
+        );
         t_build += t1.elapsed().as_micros() as u64;
 
         // 新行为：1.0× 窗口输入
         let t2 = Instant::now();
         let mut out2 = Vec::with_capacity(notes_1x.len());
-        build_note_instances(&uniform, &notes_1x, &positions, &widths, &mut out2);
+        build_note_instances(
+            &uniform,
+            &notes_1x,
+            &positions,
+            &widths,
+            &mut out2,
+            &mut scratch,
+        );
         t_build_1x += t2.elapsed().as_micros() as u64;
 
         // 内部拆解：遍历+可见过滤 vs 排序（仅可见实例参与排序）

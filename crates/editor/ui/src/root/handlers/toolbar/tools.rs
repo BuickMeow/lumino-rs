@@ -37,9 +37,7 @@ impl ToolbarHandler {
         // 形状工具类型切换（矩形/圆/三角）：把工具栏 current_shape 同步到编辑器
         if let crate::toolbar::Event::ShapeTypeSelected(shape) = event {
             let kind = match shape {
-                crate::toolbar::ShapeType::Rectangle => {
-                    lumino_editor_state::ShapeKind::Rectangle
-                }
+                crate::toolbar::ShapeType::Rectangle => lumino_editor_state::ShapeKind::Rectangle,
                 crate::toolbar::ShapeType::Circle => lumino_editor_state::ShapeKind::Circle,
                 crate::toolbar::ShapeType::Triangle => lumino_editor_state::ShapeKind::Triangle,
             };

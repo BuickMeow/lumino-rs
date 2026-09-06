@@ -4,6 +4,10 @@
 pub const MIDITRAIL_Z_FAR_DEFAULT: f32 = 7.5;
 /// MIDITrail Z 方向显示距离最大值（也是滑杆上限）。
 pub const MIDITRAIL_Z_FAR_MAX: f32 = 15.0;
+/// MIDITrail 视图模式默认值（Normal 普通视图）。
+pub const MIDITRAIL_VIEW_MODE_DEFAULT: &str = "Normal";
+/// MIDITrail Normal/Top 视图滚动速度默认值（与瀑布流速度默认值一致）。
+pub const MIDITRAIL_SPEED_DEFAULT: f32 = 1.0;
 
 /// 计数器默认文本模板（参考 Zenith-MIDI NoteCountRender 的 default 模板）。
 pub const COUNTER_DEFAULT_TEXT: &str =
@@ -56,8 +60,16 @@ pub struct VideoExportDialogState {
     pub midi_console_backend: String,
     /// 瀑布流滚动速度（默认 1.0）
     pub waterfall_speed: f32,
+    /// MIDITrail 视图模式（"Normal"/"Top"，默认 Normal；视图切换入口）
+    pub miditrail_view_mode: String,
+    /// MIDITrail Normal 视图滚动速度（默认 1.0，由旧共享速度迁移而来）
+    pub miditrail_normal_speed: f32,
+    /// MIDITrail Top 视图滚动速度（默认 1.0，与 Normal 互相独立）
+    pub miditrail_top_speed: f32,
     /// MIDITrail Z 方向显示距离（默认 7.5，精度 0.1）
     pub miditrail_z_far: f32,
+    /// MIDITrail 3D 音符开关（默认 false = 平面；true 还原盒子）
+    pub miditrail_3d_notes: bool,
     // ── 计数器设置（参考 Zenith-MIDI NoteCountRender 设置面板） ──
     /// 计数器文本模板
     pub counter_text: String,
@@ -198,7 +210,11 @@ impl VideoExportDialogState {
             render_mode: "Lumino瀑布流".to_string(),
             midi_console_backend: "GPU".to_string(),
             waterfall_speed: 1.0,
+            miditrail_view_mode: MIDITRAIL_VIEW_MODE_DEFAULT.to_string(),
+            miditrail_normal_speed: MIDITRAIL_SPEED_DEFAULT,
+            miditrail_top_speed: MIDITRAIL_SPEED_DEFAULT,
             miditrail_z_far: MIDITRAIL_Z_FAR_DEFAULT,
+            miditrail_3d_notes: false,
             counter_text: COUNTER_DEFAULT_TEXT.to_string(),
             counter_editor: iced_widget::text_editor::Content::<iced_wgpu::Renderer>::default(),
             counter_alignment: "左上".to_string(),

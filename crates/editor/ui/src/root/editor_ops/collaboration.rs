@@ -298,7 +298,10 @@ impl Root {
             .editor_state
             .data
             .mark_track_notes_changed_for(Some(affected));
-        tracing::info!("协作: 已更新 {} 个远程音符（批量索引）", operation.notes.len());
+        tracing::info!(
+            "协作: 已更新 {} 个远程音符（批量索引）",
+            operation.notes.len()
+        );
     }
 
     fn handle_remote_notes_delete(
@@ -311,10 +314,7 @@ impl Root {
         let mut ids_by_track: HashMap<usize, HashSet<u64>> = HashMap::new();
         let mut fallback_by_track: HashMap<usize, Vec<(f32, u16)>> = HashMap::new();
         for n in &operation.notes {
-            ids_by_track
-                .entry(n.track_index)
-                .or_default()
-                .insert(n.id);
+            ids_by_track.entry(n.track_index).or_default().insert(n.id);
             // 同时记录位置兜底（id 未命中时按 tick/key 删）
             fallback_by_track
                 .entry(n.track_index)
@@ -375,16 +375,18 @@ impl Root {
             std::collections::HashMap<u64, usize>,
         > = std::collections::HashMap::new();
         for note in &operation.notes {
-            id_index_by_track.entry(note.track_index).or_insert_with(|| {
-                self.editor
-                    .editor_state
-                    .data
-                    .track_notes(note.track_index)
-                    .iter()
-                    .enumerate()
-                    .map(|(i, n)| (n.id, i))
-                    .collect()
-            });
+            id_index_by_track
+                .entry(note.track_index)
+                .or_insert_with(|| {
+                    self.editor
+                        .editor_state
+                        .data
+                        .track_notes(note.track_index)
+                        .iter()
+                        .enumerate()
+                        .map(|(i, n)| (n.id, i))
+                        .collect()
+                });
         }
         let mut matched_count = 0;
         // 收集待更新操作，避免在循环中因 update_note 导致索引失效

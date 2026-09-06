@@ -10,10 +10,10 @@ mod brush;
 mod edit_ops;
 mod i2m;
 pub(crate) mod line_tool;
-pub(crate) mod shape_tool;
 mod moved;
 mod pressed;
 mod released;
+pub(crate) mod shape_tool;
 pub(crate) mod text_tool;
 
 #[cfg(test)]

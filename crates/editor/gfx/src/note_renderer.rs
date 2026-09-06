@@ -32,6 +32,13 @@ pub struct NoteRenderer {
     visible_instance_buffer: TrackedBuffer,
     /// 间接绘制参数缓冲区
     indirect_buffer: TrackedBuffer,
+    /// 间接绘制初始化模板（每帧重置用，init 时预计算，避免每帧堆分配）
+    indirect_template: Vec<u8>,
+    /// 当前绑定是否为外部权威缓冲（视频导出直绑主缓冲用）。
+    ///
+    /// 为 true 时 cull/render bind 指向外部源，`upload_instances`/`prepare_notes`
+    /// 会将其复位（自有数据覆盖外部绑定）。导出流程据此在直绑与上传回退间互斥。
+    external_bound: bool,
     /// 当前缓冲区容量（实例数量）
     capacity: usize,
     /// 最大缓冲区容量（受 GPU max_storage_buffer_binding_size 限制）

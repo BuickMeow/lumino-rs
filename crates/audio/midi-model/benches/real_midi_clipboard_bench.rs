@@ -21,11 +21,11 @@ use std::env;
 use std::path::Path;
 use std::time::Instant;
 
-use lumino_midi_model::clipboard::{
-    decode_clipboard_records, encode_clipboard, parse_clipboard_header, ClipRecord,
-};
 use lumino_midi_model::MidiDocument;
 use lumino_midi_model::NoteEvent;
+use lumino_midi_model::clipboard::{
+    ClipRecord, decode_clipboard_records, encode_clipboard, parse_clipboard_header,
+};
 
 /// 真实 MIDI 文件路径（用户提供的性能日志来源文件）。
 const DEFAULT_MIDI: &str = r"D:\BM-DATA\MIDI File\Ouranos - HDSQ & The Romanticist [v1.6.6].mid";
@@ -147,7 +147,10 @@ fn copy_json(sel: &[(usize, NoteEvent)], origin_tick: u32, origin_key: u8) -> (S
 fn paste_json(doc: &mut MidiDocument, text: &str) -> (usize, f64) {
     let t0 = Instant::now();
     let value: serde_json::Value = serde_json::from_str(text).expect("JSON 解析失败");
-    let notes = value.get("notes").and_then(|v| v.as_array()).expect("notes 缺失");
+    let notes = value
+        .get("notes")
+        .and_then(|v| v.as_array())
+        .expect("notes 缺失");
     let mut by_track: std::collections::HashMap<usize, Vec<NoteEvent>> =
         std::collections::HashMap::new();
     for item in notes {
@@ -190,14 +193,7 @@ fn copy_bin(sel: &[(usize, NoteEvent)], origin_tick: u32, origin_key: u8) -> (Ve
         })
         .collect();
     let n = records.len();
-    let bytes = encode_clipboard(
-        records.into_iter(),
-        n,
-        480,
-        origin_tick,
-        origin_key,
-        0,
-    );
+    let bytes = encode_clipboard(records.into_iter(), n, 480, origin_tick, origin_key, 0);
     let ms = t0.elapsed().as_nanos() as f64 / 1e6;
     (bytes, ms)
 }
@@ -215,26 +211,29 @@ fn paste_bin(doc: &mut MidiDocument, bytes: &[u8]) -> (usize, f64) {
     // 同 PPQN（ratio=1）：纯整数快路径，就地构造 NoteEvent 免去中间结构体二次构造。
     let origin_tick = meta.origin_tick;
     let origin_key = meta.origin_key as u32;
-    decode_clipboard_records(bytes, |tick_offset, length, key_offset, velocity, channel, track| {
-        let track = track as usize;
-        if cur_track != Some(track) {
-            if let Some(t) = cur_track {
-                inserted += doc
-                    .batch_insert_sorted_notes_with_ids(t, std::mem::take(&mut cur_vec))
-                    .len();
+    decode_clipboard_records(
+        bytes,
+        |tick_offset, length, key_offset, velocity, channel, track| {
+            let track = track as usize;
+            if cur_track != Some(track) {
+                if let Some(t) = cur_track {
+                    inserted += doc
+                        .batch_insert_sorted_notes_with_ids(t, std::mem::take(&mut cur_vec))
+                        .len();
+                }
+                cur_track = Some(track);
             }
-            cur_track = Some(track);
-        }
-        let start = origin_tick.saturating_add(tick_offset);
-        let note = NoteEvent::new(
-            start,
-            start.saturating_add(length),
-            (origin_key + key_offset as u32).min(127) as u8,
-            velocity,
-            channel,
-        );
-        cur_vec.push(note);
-    })
+            let start = origin_tick.saturating_add(tick_offset);
+            let note = NoteEvent::new(
+                start,
+                start.saturating_add(length),
+                (origin_key + key_offset as u32).min(127) as u8,
+                velocity,
+                channel,
+            );
+            cur_vec.push(note);
+        },
+    )
     .expect("decode 失败");
     if let Some(t) = cur_track {
         inserted += doc.batch_insert_sorted_notes_with_ids(t, cur_vec).len();
@@ -359,12 +358,8 @@ fn main() {
         copy_json_avg + paste_json_avg,
         copy_bin_avg + paste_bin_avg
     );
-    println!(
-        "粘贴音符数: JSON={ins_json}  二进制={ins_bin}  (应相等，校验往返一致性)",
-    );
-    let pass = copy_bin_avg < TARGET_MS
-        && paste_bin_avg < TARGET_MS
-        && ins_bin == ins_json;
+    println!("粘贴音符数: JSON={ins_json}  二进制={ins_bin}  (应相等，校验往返一致性)",);
+    let pass = copy_bin_avg < TARGET_MS && paste_bin_avg < TARGET_MS && ins_bin == ins_json;
     println!(
         "结论(1M 选区): {}",
         if pass {

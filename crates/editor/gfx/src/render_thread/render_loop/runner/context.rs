@@ -113,6 +113,15 @@ pub struct RenderFrameState<'a> {
     pub waterfall_renderer: &'a mut Option<crate::WaterfallRenderer>,
     /// Miditrail 3D GPU 渲染器（视频导出使用）
     pub miditrail_renderer: &'a mut Option<crate::MiditrailRenderer>,
+    /// 主渲染器 onion 常驻缓冲直绑源（视频导出钢琴模式零上传用）。
+    ///
+    /// 由命令派发处按 onion 流式就绪状态填充；`None` 表示未就绪，
+    /// 调用方回退首帧上传路径。句柄为克隆（引用计数），跨帧持有无碍。
+    pub onion_source: Option<(wgpu::Buffer, u32)>,
+    /// onion 常驻数据世代（与 `onion_source` 同快照，`Renderers::onion_epoch`）。
+    ///
+    /// 全局桶等派生索引用它判定重建；`onion_source` 为 `None` 时无意义。
+    pub onion_epoch: u64,
 }
 
 /// 预览帧纹理上传阶段上下文。
@@ -236,6 +245,10 @@ pub(crate) struct VideoExportFrameContext<'a> {
     pub(crate) waterfall_renderer: &'a mut Option<WaterfallRenderer>,
     /// Miditrail 渲染器
     pub(crate) miditrail_renderer: &'a mut Option<MiditrailRenderer>,
+    /// onion 全量流式上传进行中（run 循环状态）。
+    ///
+    /// 为真时主缓冲内容不完整，视频导出不得直绑，必须走上传回退路径。
+    pub(crate) onion_streaming_in_progress: bool,
 }
 
 /// 延迟控制命令处理上下文。
@@ -277,6 +290,8 @@ pub(crate) struct DeferredCommandContext<'a> {
     pub(crate) waterfall_renderer: &'a mut Option<WaterfallRenderer>,
     /// Miditrail 渲染器
     pub(crate) miditrail_renderer: &'a mut Option<MiditrailRenderer>,
+    /// onion 全量流式上传进行中（run 循环状态，透传至导出帧上下文做直绑门控）。
+    pub(crate) onion_streaming_in_progress: bool,
     /// 高精度结果发送通道
     pub(crate) texture_waterfall_result_tx: &'a std::sync::mpsc::SyncSender<WaterfallStreamMsg>,
 }

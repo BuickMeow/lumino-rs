@@ -1,7 +1,12 @@
 // waterfall.wgsl — 瀑布流模式全 GPU 帧渲染计算着色器
 //
-// 每个线程处理一个像素，直接从 storage buffer 读取音符数据，
+// 每个线程处理一个像素，直接从权威音符缓冲读取数据，
 // 写入 storage texture，实现零 CPU 参与的帧渲染。
+//
+// 音符存储是全管线唯一的 `NoteInstance` 常驻缓冲（与钢琴卷帘/走带同源同缓冲，
+// 由调用方绑定，`binding(1)` 不再是瀑布流自有拷贝）：
+//   - `key` 取自 `key_color` 低 8 位，`start/end` 由 `start_length` 还原，
+//   - 颜色取自 `key_color` 高 24 位 RGB（alpha 输出固定 200，与旧行为一致）。
 //
 // dispatch: (ceil(w/16), ceil(h/16), 1)
 // workgroup_size: (16, 16, 1)
@@ -35,10 +40,9 @@ struct WaterfallUniform {
 }
 
 struct WaterfallNote {
-    key: u32,
-    start_tick: u32,
-    end_tick: u32,
-    color_packed: u32,
+    start_length: vec2<f32>,  // [start_tick, length_tick]（与 NoteInstance 同布局）
+    key_color: u32,           // 低8位=key，高24位=RGB
+    border_width: u32,        // 本 shader 忽略（钢琴卷帘矩形管线使用）
 }
 
 // ── Bindings ──
@@ -57,13 +61,31 @@ fn is_black_key(key: u32) -> bool {
 }
 
 // 颜色解包与 miditrail_3d.wgsl 完全一致：`pack_color` 打包为 0xRRGGBBAA，
-// 按 (r, g, b, a) 解包，保证瀑布流音符与 MIDITrail 使用相同的调色板颜色处理逻辑。
+// 按 (r, g, b, a) 解包，保证瀑布流活跃键与 MIDITrail 使用相同的调色板颜色处理逻辑。
 fn unpack_color(packed: u32) -> vec4<u32> {
     let r = (packed >> 24u) & 0xFFu;
     let g = (packed >> 16u) & 0xFFu;
     let b = (packed >> 8u) & 0xFFu;
     let a = packed & 0xFFu;
     return vec4<u32>(r, g, b, a);
+}
+
+// 权威 NoteInstance 解码（与 note.wgsl / cull.wgsl 的 key_color 语义一致）。
+fn note_key(n: WaterfallNote) -> u32 {
+    return n.key_color & 0xFFu;
+}
+
+fn note_start(n: WaterfallNote) -> u32 {
+    return u32(max(n.start_length.x, 0.0));
+}
+
+fn note_end(n: WaterfallNote) -> u32 {
+    return note_start(n) + u32(max(n.start_length.y, 1.0));
+}
+
+fn unpack_key_rgb(packed: u32) -> vec3<u32> {
+    let rgb = packed >> 8u;
+    return vec3<u32>((rgb >> 16u) & 0xFFu, (rgb >> 8u) & 0xFFu, rgb & 0xFFu);
 }
 
 // 通道顺序语义为 (r, g, b, a)，与 unpack_color 保持一致。
@@ -146,7 +168,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             var hi = bucket_end;
             while lo < hi {
                 let mid = (lo + hi) / 2u;
-                if notes[mid].start_tick <= pixel_tick {
+                if note_start(notes[mid]) <= pixel_tick {
                     lo = mid + 1u;
                 } else {
                     hi = mid;
@@ -164,13 +186,13 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
                 let n = notes[i];
 
                 // 将音符的 tick 范围裁剪到视口内，避免 u32 下溢
-                let visible_end = min(n.end_tick, tick_end);
-                let visible_start = max(n.start_tick, tick);
+                let visible_end = min(note_end(n), tick_end);
+                let visible_start = max(note_start(n), tick);
                 if visible_end <= visible_start {
                     continue;
                 }
 
-                let note_x = u32(f32(n.key) * zoom_x);
+                let note_x = u32(f32(note_key(n)) * zoom_x);
                 let note_w = u32(ceil(zoom_x));
                 let note_top = u32(f32(tick_end - visible_end) * zoom_y);
                 // 将 note_bottom 限制在 note_area_h 内，防止浮点精度导致音符被裁切
@@ -178,7 +200,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
                 let note_h = max(note_bottom - note_top, 1u);
 
                 if x >= note_x && x < note_x + note_w && y >= note_top && y < note_top + note_h {
-                    let c = unpack_color(n.color_packed);
+                    let c = unpack_key_rgb(n.key_color);
                     pixel = pack_u32(c.x, c.y, c.z, 200u);
                     break;
                 }

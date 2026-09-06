@@ -18,16 +18,14 @@ impl ArrangementRenderer {
 
         const WORKGROUP_SIZE: u32 = 256;
         const MAX_DISPATCH_X: u32 = 65535;
-        let workgroup_count =
-            self.note_instance_count.div_ceil(WORKGROUP_SIZE);
+        let workgroup_count = self.note_instance_count.div_ceil(WORKGROUP_SIZE);
         let dispatch_x = workgroup_count.min(MAX_DISPATCH_X);
         let dispatch_y = workgroup_count.div_ceil(MAX_DISPATCH_X);
 
-        let mut compute_pass =
-            encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("arrangement_note_cull_pass"),
-                timestamp_writes: None,
-            });
+        let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("arrangement_note_cull_pass"),
+            timestamp_writes: None,
+        });
         compute_pass.set_pipeline(&self.note_cull_pipeline);
         compute_pass.set_bind_group(0, cull_bg, &[]);
         compute_pass.dispatch_workgroups(dispatch_x, dispatch_y, 1);

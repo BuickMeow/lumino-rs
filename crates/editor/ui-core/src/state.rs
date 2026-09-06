@@ -27,6 +27,7 @@ pub use speed_change_state::SpeedChangeDialogState;
 pub use toggle_animation::ToggleAnimationState;
 pub use video_clip_state::{VIDEO_CLIP_MAX_ZOOM, VIDEO_CLIP_MIN_ZOOM, VideoClipState};
 pub use video_export_state::{
-    COUNTER_DEFAULT_CSV_FORMAT, COUNTER_DEFAULT_TEXT, COUNTER_FULL_TEXT, MIDITRAIL_Z_FAR_DEFAULT,
-    MIDITRAIL_Z_FAR_MAX, VideoExportDialogState, VideoExportOverlayState,
+    COUNTER_DEFAULT_CSV_FORMAT, COUNTER_DEFAULT_TEXT, COUNTER_FULL_TEXT, MIDITRAIL_SPEED_DEFAULT,
+    MIDITRAIL_VIEW_MODE_DEFAULT, MIDITRAIL_Z_FAR_DEFAULT, MIDITRAIL_Z_FAR_MAX,
+    VideoExportDialogState, VideoExportOverlayState,
 };

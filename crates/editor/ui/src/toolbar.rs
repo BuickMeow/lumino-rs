@@ -6,11 +6,11 @@
 //! - `view`: 视图渲染逻辑
 
 pub(crate) mod brush_dropdown;
-pub(crate) mod shape_dropdown;
 mod buttons;
 pub mod event;
 pub(crate) mod overflow;
 mod record;
+pub(crate) mod shape_dropdown;
 pub(crate) mod tool_panel;
 pub mod types;
 mod view;
@@ -705,10 +705,7 @@ mod tests {
         toolbar.current_shape = ShapeType::Circle;
 
         toolbar.update(Event::ToolSelected(Tool::Pencil));
-        assert!(
-            !toolbar.shape_dropdown_open,
-            "切换工具应关闭形状工具下拉"
-        );
+        assert!(!toolbar.shape_dropdown_open, "切换工具应关闭形状工具下拉");
         // current_shape 作为持久偏好保留，不应被重置
         assert_eq!(toolbar.current_shape, ShapeType::Circle);
     }

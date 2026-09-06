@@ -5,10 +5,10 @@ pub use lumino_ui_core::state::{
     AudioExportDialogState, BatchEditDialogState, COUNTER_DEFAULT_CSV_FORMAT, COUNTER_DEFAULT_TEXT,
     COUNTER_FULL_TEXT, CollaborationDialogState, CollaborationViewState,
     CustomPrecisionDialogState, ExportProgressDialogState, LoadConfirmDialogState,
-    MIDITRAIL_Z_FAR_DEFAULT, MIDITRAIL_Z_FAR_MAX, MemoryMonitorDialogState,
-    ProjectSettingsDialogState, RecoverTrackDialogState, RecoverTrackEntry, SaveConfirmDialogState,
-    SpeedChangeDialogState, ToggleAnimationState, VideoClipState, VideoExportDialogState,
-    VideoExportOverlayState,
+    MIDITRAIL_SPEED_DEFAULT, MIDITRAIL_VIEW_MODE_DEFAULT, MIDITRAIL_Z_FAR_DEFAULT,
+    MIDITRAIL_Z_FAR_MAX, MemoryMonitorDialogState, ProjectSettingsDialogState,
+    RecoverTrackDialogState, RecoverTrackEntry, SaveConfirmDialogState, SpeedChangeDialogState,
+    ToggleAnimationState, VideoClipState, VideoExportDialogState, VideoExportOverlayState,
 };
 
 use crate::app_mode::AppMode;
@@ -137,7 +137,9 @@ impl RootState {
 }
 
 /// 音频导出 UI 类型 re-export（保持兼容）
-pub use lumino_message::{AudioBackend, AudioChannels, AudioFormat, Interpolation, ThreadingOption};
+pub use lumino_message::{
+    AudioBackend, AudioChannels, AudioFormat, Interpolation, ThreadingOption,
+};
 
 #[cfg(test)]
 mod tests {

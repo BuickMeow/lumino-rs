@@ -17,9 +17,7 @@ mod types;
 
 use crate::gpu_resource_tracker::TrackedBuffer;
 
-pub use types::{
-    ArrangementNoteInstance, ArrangementNoteUniform, ArrangementUniform, colors,
-};
+pub use types::{ArrangementNoteInstance, ArrangementNoteUniform, ArrangementUniform, colors};
 
 /// 走带视图渲染器
 pub struct ArrangementRenderer {

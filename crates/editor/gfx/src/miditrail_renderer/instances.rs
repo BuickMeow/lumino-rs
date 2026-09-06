@@ -2,8 +2,10 @@
 
 use super::MIDITRAIL_SCENE_DEPTH;
 use super::types::{
-    MiditrailAuraInstanceGpu, MiditrailInstanceGpu, MiditrailNoteGpu, MiditrailUniformGpu,
+    MiditrailAuraInstanceGpu, MiditrailDrivenParamsGpu, MiditrailInstanceGpu, MiditrailNoteGpu,
+    MiditrailUniformGpu,
 };
+use crate::NoteInstance;
 use crate::is_black_key;
 
 const KEYBOARD_HEIGHT: f32 = 0.012;
@@ -120,13 +122,70 @@ pub fn boost_color_packed(packed: u32, amount: f32) -> u32 {
     (((r * 255.0) as u32) << 24) | (((g * 255.0) as u32) << 16) | (((b * 255.0) as u32) << 8) | a
 }
 
+/// `build_note_instances` 跨帧复用的暂存集（调用方持有，零每帧分配）。
+///
+/// 四块缓冲各司其职：`order` 存 (排序键, 下标) 供 radix 排序；`gather`
+/// 存按序 gather 后的实例（与 `out` swap）；`radix` 是基数排序 ping-pong
+/// 副缓冲；`hist` 复用 65536 桶直方图。由渲染器/测试持有并跨帧复用。
+#[derive(Debug, Default)]
+pub struct NoteBuildScratch {
+    /// (排序键, `out` 下标)，radix 排序输入/输出。
+    pub order: Vec<(u64, u32)>,
+    /// gather 暂存（与 `out` swap）。
+    pub gather: Vec<MiditrailInstanceGpu>,
+    /// radix ping-pong 副缓冲。
+    pub radix: Vec<(u64, u32)>,
+    /// 65536 桶直方图复用。
+    pub hist: Vec<u32>,
+}
+
+/// 构建 GPU-Driven 管线参数（`MiditrailDrivenParamsGpu`）。
+///
+/// 视口/深度公式与 `build_note_instances` 头部逐 op 一致（ppq/speed 钳位、
+/// `visible_measure_count` 取整、span 下限 1），键位表直拷调用方缓存。
+/// Top 视图不走此路径（沿用 CPU `quantize_notes_for_top`＋legacy 构建）。
+pub fn build_driven_params(
+    uniform: &MiditrailUniformGpu,
+    key_positions: &[f32],
+    key_widths: &[f32],
+) -> MiditrailDrivenParamsGpu {
+    let ppq = uniform.ppq.max(1);
+    let speed = uniform.speed.max(0.1);
+    let ticks_per_measure = ppq * 4;
+    let visible_measure_count = ((4.0 / speed).round()).max(1.0) as u32;
+    let viewport_tick_span = (ticks_per_measure * visible_measure_count).max(1) as f32;
+    let z_far = NOTE_Z_OFFSET - uniform.z_far_distance.max(0.1);
+    let mut key_table = [[0.0f32; 4]; 128];
+    let n = key_positions.len().min(key_widths.len()).min(128);
+    for (i, slot) in key_table.iter_mut().enumerate().take(n) {
+        *slot = [key_positions[i], key_widths[i], 0.0, 0.0];
+    }
+    MiditrailDrivenParamsGpu {
+        tick: uniform.tick,
+        viewport_tick_span,
+        scene_depth: MIDITRAIL_SCENE_DEPTH,
+        note_z_offset: NOTE_Z_OFFSET,
+        z_far,
+        note_height: NOTE_HEIGHT,
+        note_y: NOTE_Y,
+        key_count: uniform.key_count,
+        key_table,
+    }
+}
+
 /// 构建可见音符的实例数据。
+///
+/// 排序解耦为"索引排序 + gather"两步：`scratch.order` 存 (排序键, 下标) 16B
+/// 元组并用 LSD 基数排序（稳定，与 `sort_by_key` 输出严格一致，见
+/// sort_equivalence 回归测试），再按排好序的下标把 `out` 中的实例 gather
+/// 到 `scratch.gather` 后 swap 回 `out`。
 pub fn build_note_instances(
     uniform: &MiditrailUniformGpu,
     notes: &[MiditrailNoteGpu],
     key_positions: &[f32],
     key_widths: &[f32],
     out: &mut Vec<MiditrailInstanceGpu>,
+    scratch: &mut NoteBuildScratch,
 ) {
     let tick = uniform.tick;
     let ppq = uniform.ppq.max(1);
@@ -141,12 +200,16 @@ pub fn build_note_instances(
     let z_far_distance = uniform.z_far_distance.max(0.1);
     let z_far = note_z_offset - z_far_distance;
 
-    // 打包排序键 + 实例，避免 (key, z_start, Instance) 三键闭包排序：
-    // 排序键 = is_black(1bit) | z 可排序位(32bit) | key(32bit) 打包为 u64，
-    // `sort_unstable_by_key` 只比较一个 u64，且仅移动 56B 元组（而非闭包比较
-    // 时重复计算 is_black_key 模运算与浮点比较）。基准：10 万音符时排序
-    // 4.96ms → 1.87ms（省 62%），视觉结果与旧三键 total_cmp 排序严格一致。
-    let mut entries: Vec<(u64, MiditrailInstanceGpu)> = Vec::with_capacity(notes.len());
+    // 打包排序键 + 下标：排序键 = is_black(1bit) | z 可排序位(32bit) | key(7bit)，
+    // 详见下方 f32 位重排注释。只排序 16B (键, 下标) 元组（旧 56B (键, 实例)
+    // 元组移动量的约 1/3），实例按输入序直接进 `out`，排序后 gather 重排。
+    // scratch 均由调用方提供并跨帧复用，避免每帧大堆分配。
+    out.clear();
+    out.reserve(notes.len());
+    let order = &mut scratch.order;
+    order.clear();
+    order.reserve(notes.len());
+    let t_loop = std::time::Instant::now();
     for note in notes {
         if !note.is_visible_at(tick) {
             continue;
@@ -198,10 +261,15 @@ pub fn build_note_instances(
             | ((z_sortable as u64) << 7)
             | (note.key as u64);
 
-        entries.push((
-            sort_key,
-            MiditrailInstanceGpu::new(translation, scale, color, false, 0.0, 0.0),
+        out.push(MiditrailInstanceGpu::new(
+            translation,
+            scale,
+            color,
+            false,
+            0.0,
+            0.0,
         ));
+        order.push((sort_key, out.len() as u32 - 1));
     }
 
     // 按 Comet MIDITrail 的音符绘制顺序排序：
@@ -212,12 +280,79 @@ pub fn build_note_instances(
     // (is_black, z, key) 全序，单键比较比闭包快（基准：10 万音符 6.37ms → 2.5ms，
     // 省约 60%）；稳定性保留旧语义——完全同键（同 key 同 start 的和弦叠音）
     // 按输入顺序绘制，与旧实现一致，避免同位置音符覆盖顺序不确定导致闪烁。
-    entries.sort_by_key(|(sort_key, _)| *sort_key);
-    out.extend(entries.into_iter().map(|(_, instance)| instance));
+    let loop_us = t_loop.elapsed().as_micros() as u64;
+    let t_sort = std::time::Instant::now();
+    radix_sort_order(order, &mut scratch.radix, &mut scratch.hist);
+    let sort_us = t_sort.elapsed().as_micros() as u64;
+    let t_gather = std::time::Instant::now();
+    // 按排好序的下标 gather：`scratch_gather` 复用跨帧容量，swap 后 `out`
+    // 即为最终绘制序，旧内容留在 gather 缓冲供下一帧复用（零分配）。
+    let gather = &mut scratch.gather;
+    gather.clear();
+    gather.reserve(out.len());
+    for &(_, idx) in order.iter() {
+        gather.push(out[idx as usize]);
+    }
+    std::mem::swap(out, gather);
+    let gather_us = t_gather.elapsed().as_micros() as u64;
+    diag_build_notes(loop_us, sort_us, gather_us, out.len());
+}
+
+/// build_note_instances 内部分段打点（首 3 帧 + 每 300 帧）：定位 loop/sort/gather 配比。
+fn diag_build_notes(loop_us: u64, sort_us: u64, gather_us: u64, notes: usize) {
+    static COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    if n < 3 || n.is_multiple_of(300) {
+        tracing::info!(
+            "miditrail细分[{n}]: loop={loop_us} sort={sort_us} gather={gather_us} notes={notes}"
+        );
+    }
+}
+
+/// LSD 基数排序（16bit × 4 pass，稳定）：对 (排序键, 下标) 按键排序。
+///
+/// 与 `sort_by_key`（稳定）输出严格一致：LSD 从低位到高位逐 pass 稳定
+/// 分桶，同键保持输入相对顺序；排序键是全序 u64，不存在"相等但比较器
+/// 不一致"的暗坑。4 pass 为偶数，ping-pong 后结果落回 `order`，无需回拷。
+/// 每 pass 流量 ≈ 键读 8B + 下标读写 8B，36 万音符约 23MB，远小于比较排序
+/// O(n log n) 次 16B 元组搬运。直方图 65536 × u32 由调用方复用。
+fn radix_sort_order(order: &mut Vec<(u64, u32)>, tmp: &mut Vec<(u64, u32)>, hist: &mut Vec<u32>) {
+    const BITS: u32 = 16;
+    const BUCKETS: usize = 1 << BITS;
+    const PASSES: u32 = 64 / BITS;
+    let n = order.len();
+    if n < 2 {
+        return;
+    }
+    tmp.clear();
+    tmp.resize(n, (0, 0));
+    hist.clear();
+    hist.resize(BUCKETS, 0);
+    let (mut src, mut dst) = (order.as_mut_slice(), tmp.as_mut_slice());
+    for pass in 0..PASSES {
+        let shift = pass * BITS;
+        hist.fill(0);
+        for &(key, _) in src.iter() {
+            hist[((key >> shift) & 0xFFFF) as usize] += 1;
+        }
+        let mut sum = 0u32;
+        for count in hist.iter_mut() {
+            let c = *count;
+            *count = sum;
+            sum += c;
+        }
+        for &(key, idx) in src.iter() {
+            let b = ((key >> shift) & 0xFFFF) as usize;
+            let pos = hist[b] as usize;
+            hist[b] = pos as u32 + 1;
+            dst[pos] = (key, idx);
+        }
+        std::mem::swap(&mut src, &mut dst);
+    }
+    // PASSES = 4 为偶数：偶数次 swap 后 `src` 指回 `order` 的缓冲，结果已就位。
 }
 
 /// 构建琴键实例。
-///
 /// `active_keys` 由 `compute_active_keys` 预先计算，避免本函数再次扫描全部音符。
 pub fn build_key_instances(
     uniform: &MiditrailUniformGpu,
@@ -340,23 +475,42 @@ pub fn build_aura_instances(
 /// 仅当音符当前正在发声（`start_tick <= tick < end_tick`）且已开始时有贡献；
 /// 未开始的音符（Zenith `n.start < midiTime` 才累加）与已结束的音符直接返回 0。
 fn aura_factor_for_note(uniform: &MiditrailUniformGpu, note: &MiditrailNoteGpu) -> f32 {
-    let tick = uniform.tick;
-    if note.start_tick > tick || !note.is_active_at(tick) {
+    aura_factor_raw(
+        uniform.tick,
+        uniform.ticks_per_second,
+        uniform.fps,
+        note.start_tick,
+        note.end_tick,
+    )
+}
+
+/// 光晕系数核心数学（`tick/tps/fps/start/end` 五元决定，与载体无关）。
+///
+/// Legacy `MiditrailNoteGpu` 路径与 GPU-Driven `NoteInstance` 路径共用，
+/// 保证两条路径的光晕动画逐位一致。
+fn aura_factor_raw(
+    tick: u32,
+    ticks_per_second: f32,
+    fps: f32,
+    start_tick: u32,
+    end_tick: u32,
+) -> f32 {
+    if start_tick > tick || end_tick <= tick {
         return 0.0;
     }
-    let ticks_per_second = uniform.ticks_per_second.max(0.1);
+    let tps = ticks_per_second.max(0.1);
     // Zenith `tempoFrameStep`：每帧 tick 数 = 每秒 tick 数 / fps
-    let frame_ticks = (ticks_per_second / uniform.fps.max(1.0)).max(0.001);
+    let frame_ticks = (tps / fps.max(1.0)).max(0.001);
 
     // 按下闪光：起始后 AURA_FLASH_FRAMES 帧内二次衰减到 0
-    let frames_since_start = (tick - note.start_tick) as f32 / frame_ticks;
+    let frames_since_start = (tick - start_tick) as f32 / frame_ticks;
     let flash = (AURA_FLASH_FRAMES - frames_since_start).max(0.0).powi(2) / AURA_FLASH_DIVISOR;
 
     // 常态/收缩：长音符保持 AURA_HELD_FACTOR，最后 AURA_TAIL_SECONDS 内收缩到 0。
     // Zenith `maxAuraLen = tempoFrameStep * fps` 即每秒 tick 数，作为收缩窗口。
-    let aura_len = ticks_per_second * AURA_TAIL_SECONDS;
-    let length = (note.end_tick - note.start_tick).max(1) as f32;
-    let remaining = (note.end_tick - tick) as f32;
+    let aura_len = tps * AURA_TAIL_SECONDS;
+    let length = (end_tick - start_tick).max(1) as f32;
+    let remaining = (end_tick - tick) as f32;
     let offset = remaining.min(aura_len);
     let len = length.min(aura_len);
     let tail = if len > 0.0 {
@@ -366,6 +520,79 @@ fn aura_factor_for_note(uniform: &MiditrailUniformGpu, note: &MiditrailNoteGpu) 
     };
 
     tail + flash
+}
+
+/// GPU-Driven 路径：单次遍历 `NoteInstance` 同时产出按键状态与每键光晕系数。
+///
+/// 与 legacy 两次全量扫描（`compute_active_keys`＋`build_aura_instances`内循环）
+/// 数学等价：`start/end` 解码与 `render_from_instances` 换算逐 op 一致
+/// （`max(0)`钳位＋`max(1)`长度），同键多音符取最后颜色、光晕取最大。
+/// 返回 `(ActiveKeys, aura_sizes[128])`，调用方用 `emit_aura_instances` 落盘。
+pub fn compute_active_and_aura_for_compact(
+    tick: u32,
+    ticks_per_second: f32,
+    fps: f32,
+    notes: &[NoteInstance],
+) -> (ActiveKeys, [f32; 128]) {
+    let mut pressed = [false; 128];
+    let mut colors = [0u32; 128];
+    let mut aura_sizes = [0.0f32; 128];
+    for n in notes {
+        let key = (n.key_color & 0xFF) as usize;
+        if key >= 128 {
+            continue;
+        }
+        // 与 `render_from_instances` 换算一致：start 钳零，长度至少 1 tick。
+        let start = n.start_length[0].max(0.0) as u32;
+        let end = start.saturating_add(n.start_length[1].max(1.0) as u32);
+        if start <= tick && tick < end {
+            pressed[key] = true;
+            // `key_color` 高 24 位即 RGB，低 8 key 字节清零后补 alpha=0xFF，
+            // 与 legacy `unpack→pack_color` 逐字节一致。
+            colors[key] = (n.key_color & 0xFFFF_FF00) | 0xFF;
+            let factor = aura_factor_raw(tick, ticks_per_second, fps, start, end);
+            if factor > aura_sizes[key] {
+                aura_sizes[key] = factor;
+            }
+        }
+    }
+    (ActiveKeys { pressed, colors }, aura_sizes)
+}
+
+/// 由 `(ActiveKeys, aura_sizes)` 落盘 Aura 实例（GPU-Driven 路径）。
+///
+/// 与 `build_aura_instances` 后半段（`pressed` 门控＋环几何）逐 op 一致，
+/// 只是输入已由 `compute_active_and_aura_for_compact` 预聚合，省一次全量扫描。
+pub fn emit_aura_instances(
+    active_keys: &ActiveKeys,
+    aura_sizes: &[f32; 128],
+    key_count: usize,
+    key_positions: &[f32],
+    key_widths: &[f32],
+    out: &mut Vec<MiditrailAuraInstanceGpu>,
+) {
+    let key_count = key_count
+        .min(key_positions.len())
+        .min(key_widths.len())
+        .min(128);
+    for key_idx in 0..key_count {
+        if !active_keys.pressed[key_idx] {
+            continue;
+        }
+        let aura = aura_sizes[key_idx];
+        if aura <= 0.0 {
+            continue;
+        }
+        let width = key_widths[key_idx];
+        let center = key_positions[key_idx] + width * 0.5;
+        let size = (width * AURA_RING_SCALE * aura).max(0.001);
+        out.push(MiditrailAuraInstanceGpu {
+            size,
+            pos: center,
+            color_packed: active_keys.colors[key_idx],
+            _padding: 0,
+        });
+    }
 }
 
 #[cfg(test)]

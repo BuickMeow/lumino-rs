@@ -6,6 +6,7 @@
 //! - `aura`：Aura 光晕环动画（按下闪光衰减 / 临近结束收缩 / 同键取最大 / 跳过未开始与已结束）
 //! - `notes`：音符实例（深度排序 / 黑白键分组 / Z 远平面裁剪 / 窗口缩放等价性）
 //! - `sort_equivalence`：u64 打包排序键与旧三键闭包排序等价性回归
+//! - `top_view`：Top 视图实例数单调不增（精度降级收益）与键覆盖一致性
 //! - `bench`：10 万音符实例构建性能基准
 
 use super::*;
@@ -15,6 +16,7 @@ mod bench;
 mod keyboard;
 mod notes;
 mod sort_equivalence;
+mod top_view;
 
 #[test]
 fn test_black_keys() {

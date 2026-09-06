@@ -163,6 +163,48 @@ impl_unit_enum_from_str!(RenderMode, "未知渲染模式: {input}", {
     MidiConsole => ["midi_console", "MidiConsole"],
 });
 
+/// MIDITrail 视图模式（Normal 普通 / Top 顶部，见 VIEW-001）。
+///
+/// 两种视图为平级模式：Normal 为现有 3D 斜视实现迁移而来；
+/// Top 为俯视实现（参考 Comet MIDITrail `Top Down Above` 预设）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MiditrailViewMode {
+    /// 普通视图（默认，现有行为）。
+    #[default]
+    Normal,
+    /// 顶部视图（俯视，音符精度降级以换取 GPU 开销下降）。
+    Top,
+}
+
+impl MiditrailViewMode {
+    /// 导出到渲染线程用的规范字符串。
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            MiditrailViewMode::Normal => "normal",
+            MiditrailViewMode::Top => "top",
+        }
+    }
+
+    /// 是否为顶部视图。
+    pub fn is_top(&self) -> bool {
+        matches!(self, MiditrailViewMode::Top)
+    }
+}
+
+impl std::fmt::Display for MiditrailViewMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MiditrailViewMode::Normal => f.write_str("Normal"),
+            MiditrailViewMode::Top => f.write_str("Top"),
+        }
+    }
+}
+
+impl_unit_enum_from_str!(MiditrailViewMode, "未知 MIDITrail 视图模式: {input}", {
+    Normal => ["normal", "Normal", "普通"],
+    Top => ["top", "Top", "顶部"],
+});
+
 /// 数据曲线模式的数据来源指标。
 ///
 /// 原版 MIDIGraphRenderer 从 CSV 文件读入任意列数据；

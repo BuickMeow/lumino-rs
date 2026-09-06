@@ -1,4 +1,5 @@
 use super::types::CameraUniform;
+use super::types::DrawIndirectArgs;
 use crate::gpu_resource_tracker::TrackedBuffer;
 use crate::note_renderer::NoteRenderer;
 
@@ -139,6 +140,10 @@ impl NoteRenderer {
         let chunk_layout = super::chunk::ChunkLayout::from_limits(&device.limits());
         let slot_align = chunk_layout.slot_align;
 
+        // 间接绘制初始化模板：每槽位一个默认 DrawIndirectArgs，逐帧复用写回
+        //（原每帧 `vec![0u8; 64 × slot_align]` 堆分配，约 16KB/帧）。
+        let indirect_template = Self::build_indirect_template(slot_align);
+
         let (
             gpu_note_buffer,
             visible_instance_buffer,
@@ -190,6 +195,8 @@ impl NoteRenderer {
             gpu_note_buffer,
             visible_instance_buffer,
             indirect_buffer,
+            indirect_template,
+            external_bound: false,
             capacity: Self::INITIAL_CAPACITY,
             max_capacity,
             last_upload_count: 0,
@@ -203,6 +210,22 @@ impl NoteRenderer {
             cull_bind_group_layout,
             chunk_layout,
         }
+    }
+
+    /// 构建间接绘制初始化模板（MAX_CHUNKS 槽位 × 默认 DrawIndirectArgs）。
+    ///
+    /// `prepare_pass` 每帧将其写回 indirect buffer 做重置；预计算后每帧零分配。
+    fn build_indirect_template(slot_align: u64) -> Vec<u8> {
+        let slot_count = super::chunk::MAX_CHUNKS;
+        let mut template = vec![0u8; (slot_count as u64 * slot_align) as usize];
+        let default_args = DrawIndirectArgs::default();
+        let default_bytes = bytemuck::bytes_of(&default_args);
+        for idx in 0..slot_count {
+            let offset = (idx as u64) * slot_align;
+            template[offset as usize..offset as usize + default_bytes.len()]
+                .copy_from_slice(default_bytes);
+        }
+        template
     }
 
     /// 创建所有 GPU 缓冲区（音符实例缓冲、可见索引缓冲、间接绘制缓冲、
