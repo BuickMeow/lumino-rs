@@ -78,6 +78,10 @@ pub struct ResidentCull {
     pub(super) base_buffer: Option<TrackedBuffer>,
     pub(super) compact_buffer: Option<TrackedBuffer>,
     pub(super) compact_capacity: usize,
+    /// 单调游标缓冲（256×u32，初值 0；见 `bucket_cull.wgsl` 头注）。
+    pub(super) cursor_buffer: Option<TrackedBuffer>,
+    /// 上次 COUNT 的 `tick_start`（倒退检测用；初值 0，到达过即单调记忆）。
+    pub(super) last_tick_start: u32,
 }
 
 impl ResidentCull {
@@ -89,6 +93,30 @@ impl ResidentCull {
     /// 常驻上传后调用：世代递增，下次提取重建桶（一次性成本）。
     pub fn mark_resident_updated(&mut self) {
         self.seq = self.seq.wrapping_add(1);
+    }
+
+    /// 释放导出常驻全套 GPU 资源（桶 + cull 管线暂存 + compact + 游标）。
+    ///
+    /// 调用方（渲染器 `release_export_resources`）在导出完成/取消后调用；
+    /// 常驻缓冲本身由调用方持有释放。下次 `seed` 会递增世代，`ensure_bucket`
+    /// 见桶缺失即重建——释放后冷启动行为与首启一致，无残留句柄。
+    /// 管线/布局（`pipeline`/`layout`，KB 级编译产物）有意保留：重建要重新
+    /// 编译 shader，留着给下次导出复用；占用的只是小常量。
+    pub fn release(&mut self) {
+        self.bucket = None;
+        self.src_bytes = 0;
+        self.src_count = 0;
+        self.src_seq = 0;
+        self.bucket_rebuilt_flag = false;
+        self.bind_group = None;
+        self.params_buffer = None;
+        self.counts_buffer = None;
+        self.counts_staging = None;
+        self.base_buffer = None;
+        self.compact_buffer = None;
+        self.compact_capacity = 0;
+        self.cursor_buffer = None;
+        self.last_tick_start = 0;
     }
 
     /// 只读访问 compact 缓冲（调用方绑定只读或回读；提取成功且总数 > 0 时有效）。

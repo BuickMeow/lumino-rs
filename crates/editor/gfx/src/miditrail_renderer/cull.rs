@@ -147,6 +147,30 @@ impl MiditrailRenderer {
         self.cull_cpu = window;
     }
 
+    /// 释放导出全套 GPU/CPU 常驻（完成/取消后由 `FinishVideoExport` 调用）。
+    ///
+    /// 释放：全量常驻缓冲（`seed_resident` 一次上传，24M 文档约 370MB）、
+    /// cull 提取器全套（桶/sort_index/compact，约 300MB）、回读暂存、
+    /// 实例缓冲 + Aura 实例缓冲（历史峰值，`next_power_of_two` 只增不减）、
+    /// 导出专用 CPU 切片（`cull_cpu`/`scratch_derived`）。
+    /// 保留：管线/布局/纹理/采样器（编译产物或小常量，下次导出复用）与
+    /// 通用构建暂存（`scratch_notes/keys/auras`，`clear+reserve` 语义，
+    /// 下次导出首帧即复用，无需重分配）。
+    /// 下次 `seed_resident` 按需重建 + 世代递增 → 桶重建，冷启动与首启一致。
+    pub fn release_export_resources(&mut self) {
+        self.resident_buffer = None;
+        self.resident_capacity = 0;
+        self.resident_count = 0;
+        self.resident_cull.release();
+        self.cull_staging = None;
+        self.cull_cpu = Vec::new();
+        self.scratch_derived = Vec::new();
+        self.instance_buffer = None;
+        self.instance_capacity = 0;
+        self.aura_instance_buffer = None;
+        self.aura_instance_capacity = 0;
+    }
+
     /// 确保回读暂存容量（按需扩容 + 滞后收缩；`MAP_READ | COPY_DST`）。
     ///
     /// 收缩是按需映射的搭档：只增不减会让密集段后的稀疏帧常驻数十 MB

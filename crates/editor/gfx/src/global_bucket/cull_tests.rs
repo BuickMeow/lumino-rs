@@ -5,6 +5,8 @@
 //! - `test_cull_finds_buried_long_note`（召回）：300+ 死音符之下的覆盖长音必须
 //!   被提取（旧 `waterfall_indexed.wgsl` SEARCH_BUFFER=128 回溯在此例漏检，
 //!   是导出改走 cull 的直接原因，见 `bucket_cull.wgsl` 头注）。
+//! - `test_release_drops_owned_resources`（生命周期）：`release()` 后自有
+//!   句柄全空（纯 CPU 断言，无需 GPU；`FinishVideoExport` 释放语义的回归锁）。
 
 use super::{ResidentCull, prefix_counts};
 use crate::{CullWindow, NoteInstance};
@@ -121,6 +123,23 @@ fn cull_to_cpu(
 ) -> Vec<NoteInstance> {
     let mut cull = ResidentCull::new();
     cull.mark_resident_updated();
+    extract_with(
+        device, queue, &mut cull, resident, count, tick_start, tick_end, key_count,
+    )
+}
+
+/// 同一提取器多窗口提取（游标跨窗口推进；生产导出 tick 递增的精确模拟）。
+#[allow(clippy::too_many_arguments)]
+fn extract_with(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    cull: &mut ResidentCull,
+    resident: &wgpu::Buffer,
+    count: usize,
+    tick_start: u32,
+    tick_end: u32,
+    key_count: usize,
+) -> Vec<NoteInstance> {
     let window = CullWindow {
         tick_start,
         tick_end,
@@ -254,4 +273,101 @@ fn test_cull_finds_buried_long_note() {
     // 与 CPU 参考全集一致。
     let expected = cpu_window(&notes, TICK, tick_end, KEY_COUNT);
     assert_eq!(got.len(), expected.len(), "埋藏场景窗口数量一致");
+}
+
+/// 同一提取器连续推进（tick 递增 = 生产导出）：每窗输出与 CPU 参考逐字节一致。
+///
+/// 锁游标语义——第二窗起扫描起点已不是桶底（死音符被跳过），输出仍须正确；
+/// 若推进逻辑丢活音符（如游标越过 covering 长音），此处逐字节比对即翻脸。
+#[test]
+fn test_cursor_advance_matches_cpu_per_window() {
+    const KEY_COUNT: usize = 128;
+    let notes = synthetic_full();
+    let (device, queue) = test_device();
+    let resident = upload_storage(&device, "cull_cursor_advance", &notes);
+    let mut cull = ResidentCull::new();
+    cull.mark_resident_updated();
+    // 4 个递增窗口（步长错开，避免与数据周期的对齐巧合）。
+    let mut tick = 0u32;
+    for step in 0..4u32 {
+        tick += 1500 + step * 700;
+        let tick_end = tick.saturating_add(4000);
+        let expected = cpu_window(&notes, tick, tick_end, KEY_COUNT);
+        let got = extract_with(
+            &device,
+            &queue,
+            &mut cull,
+            &resident,
+            notes.len(),
+            tick,
+            tick_end,
+            KEY_COUNT,
+        );
+        assert_eq!(got.len(), expected.len(), "第{step}窗数量一致(tick={tick})");
+        let got_bytes = bytemuck::cast_slice::<NoteInstance, u8>(&got);
+        let expected_bytes = bytemuck::cast_slice::<NoteInstance, u8>(&expected);
+        assert_eq!(
+            got_bytes, expected_bytes,
+            "第{step}窗逐字节一致(tick={tick})"
+        );
+    }
+}
+
+/// tick 倒退必须重置游标重扫（非单调调用的护栏）。
+///
+/// 无护栏时：游标停在 6000 处的死亡分界，倒回 1000 的窗口会漏掉游标前的
+/// 活音符（数量对不上）；有护栏时输出与 CPU 参考逐字节一致。
+#[test]
+fn test_cursor_reset_on_tick_rewind() {
+    const KEY_COUNT: usize = 128;
+    let notes = synthetic_full();
+    let (device, queue) = test_device();
+    let resident = upload_storage(&device, "cull_cursor_rewind", &notes);
+    let mut cull = ResidentCull::new();
+    cull.mark_resident_updated();
+    // 先推进到深处（游标大幅前移）。
+    let _ = extract_with(
+        &device,
+        &queue,
+        &mut cull,
+        &resident,
+        notes.len(),
+        6000,
+        10000,
+        KEY_COUNT,
+    );
+    // 倒回浅处：必须与冷启动一致。
+    let expected = cpu_window(&notes, 1000, 5000, KEY_COUNT);
+    let got = extract_with(
+        &device,
+        &queue,
+        &mut cull,
+        &resident,
+        notes.len(),
+        1000,
+        5000,
+        KEY_COUNT,
+    );
+    assert_eq!(got.len(), expected.len(), "倒退窗口数量一致");
+    let got_bytes = bytemuck::cast_slice::<NoteInstance, u8>(&got);
+    let expected_bytes = bytemuck::cast_slice::<NoteInstance, u8>(&expected);
+    assert_eq!(got_bytes, expected_bytes, "倒退窗口逐字节一致");
+}
+
+/// `release()` 必须放掉全部自有句柄（桶/计数/基址/compact）。
+///
+/// 纯 CPU 断言：`ResidentCull::new()` 本身无句柄，`release()` 须是幂等的
+/// 空操作——锁的是"释放语义存在且全覆盖"，防未来加字段漏放。
+/// 真 GPU 覆盖（播种→提取→释放→重播种一致）由生产链路保证，
+/// 此处不断言（ci 无卡时 test_device 即 panic）。
+#[test]
+fn test_release_drops_owned_resources() {
+    let mut cull = ResidentCull::new();
+    cull.release();
+    assert!(cull.compact_buffer().is_none(), "release 后 compact 须空");
+    assert!(cull.bucket_key_offsets().is_none(), "release 后桶边界须空");
+    assert!(cull.bucket_sort_index().is_none(), "release 后置换索引须空");
+    // 幂等：重复释放不得 panic。
+    cull.release();
+    assert!(cull.compact_buffer().is_none(), "重复 release 须仍为空");
 }

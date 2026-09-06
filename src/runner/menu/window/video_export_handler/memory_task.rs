@@ -672,6 +672,7 @@ pub(super) fn run_video_export_task(input: RunVideoExportTaskInput) {
         ));
     }
     finalize_video_export(
+        &cmd_sender,
         encoder,
         cancelled,
         elapsed,

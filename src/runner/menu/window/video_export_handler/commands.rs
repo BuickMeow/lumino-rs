@@ -48,8 +48,23 @@ pub(super) fn send_initial_render_commands(
     false
 }
 
+/// 发送收尾渲染命令：`FinishVideoExport`（渲染线程释放导出常驻）。
+///
+/// 成功/取消双路径必达（由 `finalize_video_export` 调用）：常驻不清，
+/// 下次导出前显存始终被旧数据占着（24M 文档约 700MB+）。best-effort：
+/// 渲染线程已死则无事可做，记 warn 不阻断 ffmpeg 收尾。
+pub(super) fn send_finish_render_command(cmd_sender: &Sender<RenderCommand>) {
+    if cmd_sender
+        .send(RenderCommand::Control(ControlCommand::FinishVideoExport))
+        .is_err()
+    {
+        tracing::warn!("发送 FinishVideoExport 命令失败（渲染线程可能已退出）");
+    }
+}
+
 /// 收尾编码：根据是否取消发送最终进度，并调用 `finish()` 写入文件头。
 pub(super) fn finalize_video_export(
+    cmd_sender: &Sender<RenderCommand>,
     encoder: FfmpegEncoder,
     cancelled: bool,
     elapsed: f64,
@@ -57,6 +72,8 @@ pub(super) fn finalize_video_export(
     smoothed_fps: f64,
     progress_tx: &UnboundedSender<ProgressMsg>,
 ) {
+    // 先放显存：渲染线程收到后即释常驻，与 ffmpeg 收尾并发，不 blocking 编码。
+    send_finish_render_command(cmd_sender);
     if !cancelled {
         let _ = progress_tx.send((
             "导出完成".to_string(),

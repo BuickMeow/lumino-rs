@@ -56,7 +56,16 @@ pub(super) fn handle_deferred_command(
             });
         }
         ControlCommand::FinishVideoExport => {
-            tracing::info!("视频导出完成，释放读回管线");
+            tracing::info!("视频导出完成，释放读回管线与导出常驻");
+            // 常驻释放：两个渲染器与渲染线程同寿命，resident/cull/实例缓冲
+            // 在导出间永驻显存（24M 文档约 700MB+），且此前本命令无人发送
+            // （死代码）——此处与发送侧（finalize 成功/取消双路径）一起复活。
+            if let Some(r) = context.miditrail_renderer.as_mut() {
+                r.release_export_resources();
+            }
+            if let Some(r) = context.waterfall_renderer.as_mut() {
+                r.release_export_resources();
+            }
             *context.export_pipeline = None;
             *context.export_frame_tx = None;
             *context.export_renderers = None;

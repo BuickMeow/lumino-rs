@@ -19,6 +19,15 @@ impl WaterfallRenderer {
         self.resident_cull.mark_resident_updated();
     }
 
+    /// 释放导出 cull 全套 GPU 资源（完成/取消后由 `FinishVideoExport` 调用）。
+    ///
+    /// 只放自有部分（桶/sort_index/compact + cull 暂存）：权威常驻是调用方
+    /// 共享缓冲（onion，UI 实时也在用），此处绝不碰。下次提取见桶缺失即
+    /// 按当前世代重建，冷启动与首启一致。
+    pub fn release_export_resources(&mut self) {
+        self.resident_cull.release();
+    }
+
     /// cull 窗口渲染：COUNT → 前缀和 → FILL → 活跃键内核 → legacy 精确渲染。
     ///
     /// 常驻由调用方持有（导出共享缓冲，一次上传）；窗口提取零回读（仅 1KB 计数），

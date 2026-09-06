@@ -39,7 +39,14 @@ impl ResidentCull {
         self.ensure_bucket(device, queue, &source)?;
         out.bucket_rebuilt = self.bucket_rebuilt_flag;
         self.bucket_rebuilt_flag = false;
-        self.ensure_cull_resources(device);
+        self.ensure_cull_resources(device, queue);
+        // 游标护栏：tick 倒退（非单调调用）则清零重扫，否则游标位置相对
+        // 新 tick 仍有效（死亡单调）。等值 tick 无需处理（非严格单调成立）。
+        // 注意 `ensure_bucket` 重建时已清零，此处只处理"桶未变但 tick 回退"。
+        if window.tick_start < self.last_tick_start {
+            self.zero_cursors(queue);
+        }
+        self.last_tick_start = window.tick_start;
 
         let params = CullParamsGpu {
             tick_start: window.tick_start,

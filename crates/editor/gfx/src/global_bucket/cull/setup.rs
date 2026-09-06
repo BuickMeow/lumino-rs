@@ -5,7 +5,7 @@
 //! 绑定组在桶/compact 句柄变化时失效重建，句柄稳定时跨帧复用。
 
 use super::super::support::{new_storage_buffer, storage_entry};
-use super::super::{BucketSource, GlobalBucketError, GlobalBucketIndex};
+use super::super::{BucketSource, GlobalBucketError, GlobalBucketIndex, KEY_BUCKETS};
 use super::{CullParamsGpu, missing};
 use crate::gpu_resource_tracker::TrackedBuffer;
 
@@ -46,11 +46,25 @@ impl ResidentCull {
         self.src_seq = source.epoch;
         self.bind_group = None;
         self.bucket_rebuilt_flag = true;
+        // 排序变化 → 游标位置失效，清零（缓冲若尚未创建由下方的
+        // `ensure_cull_resources` 补建，零初值即有效游标）。
+        self.zero_cursors(queue);
         Ok(())
     }
 
+    /// 游标清零（桶重建 / tick 倒退后调用；缓冲缺失时跳过，创建即零初值）。
+    pub(super) fn zero_cursors(&mut self, queue: &wgpu::Queue) {
+        if let Some(ref cursor) = self.cursor_buffer {
+            queue.write_buffer(cursor.inner(), 0, &[0u8; KEY_BUCKETS * 4]);
+        }
+        self.last_tick_start = 0;
+    }
+
     /// 确保 cull 管线与暂存已创建（once；compact 除外，按需扩容见 `ensure_compact`）。
-    pub(super) fn ensure_cull_resources(&mut self, device: &wgpu::Device) {
+    ///
+    /// 游标创建后显式清零：wgpu storage 缓冲零初始化不可依赖（见 gpu-synth
+    /// 的防御性 clear），游标垃圾值会跳过活音符——正确性悬崖，必须写零。
+    pub(super) fn ensure_cull_resources(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
         if self.pipeline.is_some() {
             return;
         }
@@ -69,6 +83,8 @@ impl ResidentCull {
                 storage_entry(4, false),
                 storage_entry(5, false),
                 storage_entry(6, true),
+                // binding 7：单调游标（每 key 一 u32，读写；零初值即有效）。
+                storage_entry(7, false),
             ],
         });
         let pipeline = crate::pipeline::ComputePipelineBuilder::new(
@@ -92,6 +108,13 @@ impl ResidentCull {
         ));
         self.counts_buffer = Some(new_storage_buffer(device, "bucket_cull_counts", 1024));
         self.base_buffer = Some(new_storage_buffer(device, "bucket_cull_base", 1024));
+        // 游标 1KB：创建后显式清零（零初值 = 全键从桶底起扫，有效游标）。
+        self.cursor_buffer = Some(new_storage_buffer(
+            device,
+            "bucket_cull_cursor",
+            (KEY_BUCKETS * 4) as u64,
+        ));
+        self.zero_cursors(queue);
         self.counts_staging = Some(TrackedBuffer::new(
             device,
             &wgpu::BufferDescriptor {
@@ -143,40 +166,51 @@ impl ResidentCull {
             .as_ref()
             .ok_or(missing("cull 计数缓冲"))?;
         let base = self.base_buffer.as_ref().ok_or(missing("cull 基址缓冲"))?;
-        self.bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("bucket_cull_bind_group"),
-            layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: params.inner().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: resident.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: bucket.key_offsets_buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: bucket.sort_index_buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: compact.inner().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 5,
-                    resource: counts.inner().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 6,
-                    resource: base.inner().as_entire_binding(),
-                },
-            ],
-        }));
+        self.bind_group = Some(
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("bucket_cull_bind_group"),
+                layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: params.inner().as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: resident.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: bucket.key_offsets_buffer().as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: bucket.sort_index_buffer().as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: compact.inner().as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: counts.inner().as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 6,
+                        resource: base.inner().as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 7,
+                        resource: self
+                            .cursor_buffer
+                            .as_ref()
+                            .ok_or(missing("cull 游标缓冲"))?
+                            .inner()
+                            .as_entire_binding(),
+                    },
+                ],
+            }),
+        );
         Ok(())
     }
 }
