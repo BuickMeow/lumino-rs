@@ -108,6 +108,91 @@ pub fn create_top_note_render_pipeline(
     )
 }
 
+/// 创建 GPU-Driven 音符渲染管线（Normal 视图终局路径）。
+///
+/// 与旧 `note_pipeline` 的两处关键差异：
+/// - 实例布局 = `NoteInstance` 原字节（16B：start_length + key_color + border），
+///   位姿由 `miditrail_note_driven.wgsl` 按实例实时推导；
+/// - `depth_write=true`：不透明音符用深度测试解决遮挡，CPU 画家排序删除。
+/// 琴键仍走旧管线最后绘制（compare 已改为 Always，永远置顶，观感不变）。
+pub fn create_note_driven_pipeline(
+    device: &wgpu::Device,
+    bind_group_layout: &wgpu::BindGroupLayout,
+    driven_group_layout: &wgpu::BindGroupLayout,
+    shader: &wgpu::ShaderModule,
+) -> wgpu::RenderPipeline {
+    let pos_normal_layout = wgpu::VertexBufferLayout {
+        array_stride: 24,
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &[
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x3,
+                offset: 0,
+                shader_location: 0,
+            },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x3,
+                offset: 12,
+                shader_location: 1,
+            },
+        ],
+    };
+    // 紧凑实例：vec2(start, length) + u32(key_color) + u32(border)，stride 16。
+    let compact_layout = wgpu::VertexBufferLayout {
+        array_stride: 16,
+        step_mode: wgpu::VertexStepMode::Instance,
+        attributes: &[
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x2,
+                offset: 0,
+                shader_location: 2,
+            },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Uint32,
+                offset: 8,
+                shader_location: 3,
+            },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Uint32,
+                offset: 12,
+                shader_location: 4,
+            },
+        ],
+    };
+
+    RenderPipelineBuilder::new(device, "miditrail_note_driven_pipeline", shader)
+        .bind_group(bind_group_layout)
+        .bind_group(driven_group_layout)
+        .vertex_buffer(pos_normal_layout)
+        .vertex_buffer(compact_layout)
+        .opaque_target(wgpu::TextureFormat::Rgba8Unorm)
+        .depth_stencil(Some(wgpu::DepthStencilState {
+            format: wgpu::TextureFormat::Depth32Float,
+            depth_write_enabled: true,
+            depth_compare: wgpu::CompareFunction::LessEqual,
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }))
+        .build()
+}
+
+/// GPU-Driven 参数组布局（group1：位姿参数＋键位表 uniform，顶点着色器只读）。
+pub fn create_driven_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("miditrail_driven_group_layout"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::VERTEX,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }],
+    })
+}
+
 fn create_instanced_pipeline(
     device: &wgpu::Device,
     bind_group_layout: &wgpu::BindGroupLayout,
@@ -178,6 +263,8 @@ fn create_instanced_pipeline(
         .depth_stencil(Some(wgpu::DepthStencilState {
             format: wgpu::TextureFormat::Depth32Float,
             depth_write_enabled: depth_write,
+            // 回退到 LessEqual（2026-09-05 driven 实验前的原始状态）：
+            // UI 实测键盘顶层/前面层异常，先恢复最后已知良好状态再查根因。
             depth_compare: wgpu::CompareFunction::LessEqual,
             stencil: wgpu::StencilState::default(),
             bias: wgpu::DepthBiasState::default(),
@@ -295,4 +382,16 @@ pub fn create_buffers(
     );
 
     (uniform_buffer, vertex_buffer, index_buffer)
+}
+
+/// 音符平面索引缓冲（`QUAD_INDICES`，6×u16 常驻；仅音符 draw 绑定）。
+pub fn create_quad_index_buffer(device: &wgpu::Device, indices: &[u16]) -> TrackedBuffer {
+    TrackedBuffer::new_init(
+        device,
+        &wgpu::util::BufferInitDescriptor {
+            label: Some("miditrail_quad_index_buffer"),
+            contents: bytemuck::cast_slice(indices),
+            usage: wgpu::BufferUsages::INDEX,
+        },
+    )
 }

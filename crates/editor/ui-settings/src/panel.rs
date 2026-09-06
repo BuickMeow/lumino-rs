@@ -135,8 +135,10 @@ impl SettingsPanel {
                 // 从外部类型切回内置时，默认落到 XSynth（用户可在子下拉里改选 LGS）。
                 self.synth.backend = match ot {
                     OutputType::Builtin => {
-                        if matches!(self.synth.backend, SynthBackend::Kdmapi | SynthBackend::System)
-                        {
+                        if matches!(
+                            self.synth.backend,
+                            SynthBackend::Kdmapi | SynthBackend::System
+                        ) {
                             SynthBackend::XSynth
                         } else {
                             self.synth.backend
@@ -264,12 +266,12 @@ impl SettingsPanel {
             }
             Event::AudioOutputSelected(name) => {
                 // 空串/默认项表示使用系统默认输出设备
-                self.synth.selected_audio_output_device = if name.is_empty() {
-                    None
-                } else {
-                    Some(name)
-                };
-                tracing::debug!("设置: 音频播放输出设备选择为 {:?}", self.synth.selected_audio_output_device);
+                self.synth.selected_audio_output_device =
+                    if name.is_empty() { None } else { Some(name) };
+                tracing::debug!(
+                    "设置: 音频播放输出设备选择为 {:?}",
+                    self.synth.selected_audio_output_device
+                );
             }
             Event::ScanAudioOutputs => {
                 // 实际扫描由 editor/ui 的 Root::scan_audio_outputs 执行并写回设置面板

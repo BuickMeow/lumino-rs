@@ -12,6 +12,7 @@ pub mod cache;
 mod cc_bar_renderer;
 pub mod constants;
 mod context;
+mod global_bucket;
 mod gpu_note_buffer;
 mod gpu_resource_tracker;
 pub mod grid;
@@ -44,6 +45,11 @@ pub use cc_bar_renderer::{
     build_cc_bar_instances,
 };
 pub use context::{Context, ContextError, Result};
+pub(crate) use global_bucket::readback_bytes_sync;
+pub use global_bucket::{
+    BucketSource, CullExtract, CullWindow, GlobalBucketError, GlobalBucketIndex, KEY_BUCKETS,
+    ResidentCull, prefix_counts,
+};
 pub use gpu_note_buffer::{GpuNoteBuffer, NoteEvent, OnionSkinStreamMsg};
 pub use grid::{generate_ruler_instances, is_black_key};
 pub use grid_renderer::{GridLineInstance, GridPrepareParams, GridRenderer};
@@ -74,7 +80,7 @@ pub use miditrail_renderer::{
     MiditrailNoteGpu, MiditrailRenderer, MiditrailUniformGpu, MiditrailViewMode, pack_color,
 };
 pub use render_thread::{RenderParams, WgpuRenderThread};
-pub use waterfall_renderer::{WaterfallNoteGpu, WaterfallRenderer, WaterfallUniformGpu};
+pub use waterfall_renderer::{WaterfallRenderer, WaterfallUniformGpu};
 /// 重导出 wgpu 纹理格式，供 UI 层匹配视频导出像素格式
 pub use wgpu::TextureFormat;
 

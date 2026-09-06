@@ -137,6 +137,9 @@ impl DialogHandler {
             V::MiditrailZFarChanged(v) => {
                 root.state.video_export_dialog.miditrail_z_far = v;
             }
+            V::Miditrail3DNotesChanged(v) => {
+                root.state.video_export_dialog.miditrail_3d_notes = v;
+            }
             V::CounterTextAction(action) => {
                 let st = &mut root.state.video_export_dialog;
                 st.counter_editor.perform(action);

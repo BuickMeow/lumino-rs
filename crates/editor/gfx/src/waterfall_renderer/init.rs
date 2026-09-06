@@ -4,7 +4,6 @@ use super::{TrackedBuffer, TrackedTexture, WaterfallRenderer, WaterfallUniformGp
 
 impl WaterfallRenderer {
     const SHADER: &'static str = include_str!("../shaders/waterfall.wgsl");
-    const INITIAL_NOTE_CAPACITY: usize = 4096;
 
     /// 创建瀑布流渲染器。
     pub fn new(device: &wgpu::Device) -> Self {
@@ -96,15 +95,17 @@ impl WaterfallRenderer {
             bind_group_layout,
             bind_group: None,
             uniform_buffer,
-            note_buffer: None,
             active_key_colors_buffer: None,
             key_offsets_buffer: None,
             output_texture: None,
             output_texture_view: None,
-            note_capacity: 0,
             key_offsets_capacity: 0,
             current_width: 0,
             current_height: 0,
+            resident_cull: crate::ResidentCull::new(),
+            active_pipeline: None,
+            active_layout: None,
+            active_params_buffer: None,
         }
     }
 
@@ -147,29 +148,7 @@ impl WaterfallRenderer {
         self.output_texture_view = Some(view);
         self.current_width = width;
         self.current_height = height;
-        // 尺寸变化 → bind group 需要重建
-        self.bind_group = None;
-    }
-
-    /// 确保 note buffer 有足够容量。
-    pub(crate) fn ensure_note_buffer(&mut self, device: &wgpu::Device, count: usize) {
-        if count <= self.note_capacity {
-            return;
-        }
-        let new_cap = count.next_power_of_two().max(Self::INITIAL_NOTE_CAPACITY);
-        let size = (new_cap * std::mem::size_of::<super::WaterfallNoteGpu>()) as u64;
-        // 旧缓冲由 Option::take 触发 Drop 自动注销
-        let buffer = TrackedBuffer::new(
-            device,
-            &wgpu::BufferDescriptor {
-                label: Some("waterfall_note_buffer"),
-                size,
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            },
-        );
-        self.note_buffer = Some(buffer);
-        self.note_capacity = new_cap;
+        // 尺寸变化 → legacy 绑定组重建（活跃键内核组每帧重建，无须处理）
         self.bind_group = None;
     }
 

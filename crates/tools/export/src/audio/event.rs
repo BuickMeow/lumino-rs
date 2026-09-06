@@ -16,7 +16,9 @@ use xsynth_core::{
 
 use crate::error::{ExportError, ExportResult};
 
-use super::{config::AudioRenderConfig, limiter::AudioLimiter, stream::SampleSink, tick_conv::TickToTime};
+use super::{
+    config::AudioRenderConfig, limiter::AudioLimiter, stream::SampleSink, tick_conv::TickToTime,
+};
 
 /// 事件处理器 — 将 MIDI 事件流式渲染到 SampleSink
 ///
@@ -346,7 +348,9 @@ pub fn load_soundfonts(
     config: &AudioRenderConfig,
 ) -> ExportResult<()> {
     if config.soundfonts.is_empty() {
-        return Err(ExportError::AudioWrite("未指定音色库文件，请在导出面板选择 .sf2".into()));
+        return Err(ExportError::AudioWrite(
+            "未指定音色库文件，请在导出面板选择 .sf2".into(),
+        ));
     }
     for p in &config.soundfonts {
         validate_sf2_path(p)?;

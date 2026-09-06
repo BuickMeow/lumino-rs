@@ -11,8 +11,8 @@
 //! （例如设备被重命名 / 重新插拔）。因此配置中仅持久化设备名，
 //! 启动时按名重新解析；解析失败则优雅回退到系统默认输出设备。
 
-use cpal::traits::{DeviceTrait, HostTrait};
 use cpal::Device;
+use cpal::traits::{DeviceTrait, HostTrait};
 
 /// 扫描系统所有可用的音频播放输出设备名称。
 ///
@@ -169,4 +169,3 @@ mod tests {
         }
     }
 }
-

@@ -140,7 +140,12 @@ impl Host {
             .time_signatures(es.data.time_signatures.clone())
             .arrangement_overlay_instances(data.arrangement_overlay_instances)
             .arrangement_overlay_back_len(data.arrangement_overlay_back_len)
-            .arrangement_track_order(data.arrangement_track_order.iter().map(|&t| t as u32).collect())
+            .arrangement_track_order(
+                data.arrangement_track_order
+                    .iter()
+                    .map(|&t| t as u32)
+                    .collect(),
+            )
             .arrangement_track_visible(data.arrangement_track_visible)
             .arrangement_uniform(arrangement_uniform)
             .cc_bar_instances(data.cc_bar_instances)

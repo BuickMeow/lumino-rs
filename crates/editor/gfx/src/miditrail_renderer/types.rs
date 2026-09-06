@@ -39,6 +39,23 @@ impl MiditrailNoteGpu {
     }
 }
 
+/// Miditrail 可见 tick 跨度（与 UI 收集窗口同公式，速度越快/远裁越小窗口越窄）。
+///
+/// UI 窗口收集（`collect_window_notes` 上界）与渲染侧 cull 窗口共用，保证谓词一致：
+/// 收集范围按实际 Z 显示距离缩放（GPU 可见条件 `start - tick < span × z_far/SCENE_DEPTH`），
+/// 默认 `z_far = SCENE_DEPTH` 时退化为全跨度。公式与 UI 侧逐 op 一致（含 f32 截断）。
+#[must_use]
+pub fn miditrail_viewport_span(ppq: u32, speed: f32, z_far_distance: f32) -> u32 {
+    let z_far_scale = (z_far_distance.max(0.1) / super::MIDITRAIL_SCENE_DEPTH).clamp(
+        0.1 / super::MIDITRAIL_SCENE_DEPTH,
+        super::MIDITRAIL_MAX_Z_FAR_DISTANCE / super::MIDITRAIL_SCENE_DEPTH,
+    );
+    let speed = speed.max(0.1);
+    let ticks_per_measure = ppq * 4;
+    let visible_measure_count = ((4.0 / speed).round()).max(1.0) as u32;
+    ((ticks_per_measure * visible_measure_count).max(1) as f32 * z_far_scale) as u32
+}
+
 /// MIDITrail 视图模式（GPU 层，与事件层枚举同构，见 VIEW-001）。
 ///
 /// - `Normal`：现有 3D 斜视实现（由旧单一视图迁移而来）；
@@ -161,6 +178,34 @@ pub struct MiditrailCameraGpu {
     pub light_dir: [f32; 3],
     /// 环境光强度
     pub ambient: f32,
+}
+
+/// GPU-Driven 音符管线参数（`miditrail_note_driven.wgsl` group1 uniform）。
+///
+/// CPU 每帧只填这 1KB（tick 相关 7 个 f32/u32 ＋ 128 键位表），位姿推导
+/// 进 vertex shader。与 WGSL `DrivenParams` 字段一一对应，顺序一致。
+#[repr(C)]
+#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct MiditrailDrivenParamsGpu {
+    /// 当前 tick（`visible_start = max(start, tick)` 的基准）。
+    pub tick: u32,
+    /// 视口 tick 跨度（`ticks_per_measure × visible_measure_count`）。
+    pub viewport_tick_span: f32,
+    /// 场景深度（tick→Z 映射比例）。
+    pub scene_depth: f32,
+    /// 音符 Z 原点（键盘处）。
+    pub note_z_offset: f32,
+    /// 远裁剪 Z（`note_z_offset - z_far_distance`）。
+    pub z_far: f32,
+    /// 音符高度（Y）。
+    pub note_height: f32,
+    /// 音符 Y 基准。
+    pub note_y: f32,
+    /// 键盘键数（shader 侧 `key < 128` 硬约束为主，此处仅信息冗余）。
+    pub key_count: u32,
+    /// `[left, width]` 键位表（与 CPU `key_positions`/`key_widths` 同源；
+    /// vec4 满足 uniform 数组 16 字节步长对齐，z/w 保留未用）。
+    pub key_table: [[f32; 4]; 128],
 }
 
 /// 每实例数据（上传 GPU，与 WGSL 中的 `Instance` 对应）

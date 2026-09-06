@@ -334,7 +334,9 @@ impl MidiManager {
             .outputs()
             .map_err(|e| format!("获取 LGS (GPU) 输出设备失败: {:?}", e))?;
 
-        let output = outputs.first().ok_or("未找到可用的 LGS (GPU) MIDI 输出设备")?;
+        let output = outputs
+            .first()
+            .ok_or("未找到可用的 LGS (GPU) MIDI 输出设备")?;
 
         let conn = api
             .open_output(output.id)
@@ -613,8 +615,10 @@ impl MidiManager {
         if let Some(output) = self.output.take() {
             // 仅真正的 XSynth-Realtime 还 fallback 才值得警告；
             // Core 引擎本就复用主输出，属于预期行为，不报警。
-            if matches!(self.active_backend, SynthBackend::XSynth | SynthBackend::Lgs)
-                && self.api.is_some()
+            if matches!(
+                self.active_backend,
+                SynthBackend::XSynth | SynthBackend::Lgs
+            ) && self.api.is_some()
             {
                 tracing::warn!(
                     "MIDI 播放输出: 策略1和2均失败，使用主输出作为播放输出（音符预览将暂时不可用）"

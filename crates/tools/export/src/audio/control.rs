@@ -5,9 +5,8 @@
 //! `AudioExportControl` 的原子标志驱动暂停与中止。
 
 use std::sync::{
-    Arc,
+    Arc, Condvar, Mutex,
     atomic::{AtomicBool, Ordering},
-    Condvar, Mutex,
 };
 
 use crate::error::{ExportError, ExportResult};

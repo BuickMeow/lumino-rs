@@ -65,7 +65,9 @@ use iced_core::{Alignment, Length};
 use iced_widget::{checkbox, pick_list, row, text, text_input};
 
 use crate::message::{AudioExportAction, Message};
-use crate::state::root_state::{AudioBackend, AudioChannels, AudioFormat, Interpolation, ThreadingOption};
+use crate::state::root_state::{
+    AudioBackend, AudioChannels, AudioFormat, Interpolation, ThreadingOption,
+};
 use crate::view::widgets;
 
 fn audio_settings_section<'a>(

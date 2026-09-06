@@ -12,8 +12,8 @@ use winit::event_loop::ActiveEventLoop;
 use lumino_ui::message::SaveConfirmAction;
 use lumino_ui::state::root_state::DialogType;
 
-use crate::runner::inner::PendingCloseAction;
 use crate::runner::RunnerInner;
+use crate::runner::inner::PendingCloseAction;
 
 impl RunnerInner {
     /// 处理文件菜单事件
@@ -255,7 +255,10 @@ impl RunnerInner {
             let msg = lumino_extras::i18n::main_translations(language)
                 .status_no_midi_content
                 .to_string();
-            self.window_state.window.ui_mut().set_status_message(Some(msg));
+            self.window_state
+                .window
+                .ui_mut()
+                .set_status_message(Some(msg));
             tracing::info!("导出 MIDI：没有可导出的内容");
             return;
         };
@@ -285,7 +288,10 @@ impl RunnerInner {
                 let msg = lumino_extras::i18n::main_translations(language)
                     .status_midi_exported
                     .to_string();
-                self.window_state.window.ui_mut().set_status_message(Some(msg));
+                self.window_state
+                    .window
+                    .ui_mut()
+                    .set_status_message(Some(msg));
             }
             Err(e) => {
                 tracing::error!("导出 MIDI 失败: {}", e);
@@ -294,7 +300,10 @@ impl RunnerInner {
                     "{}：{e}",
                     lumino_extras::i18n::main_translations(language).status_save_failed
                 );
-                self.window_state.window.ui_mut().set_status_message(Some(msg));
+                self.window_state
+                    .window
+                    .ui_mut()
+                    .set_status_message(Some(msg));
             }
         }
     }
@@ -367,7 +376,9 @@ impl RunnerInner {
         if self.window_state.window.ui().is_project_modified() {
             tracing::debug!("工程存在未保存更改，弹出保存确认对话框：{:?}", action);
             self.pending_close_action = Some(action);
-            self.window_state.dialog_manager.open_dialog(DialogType::SaveConfirm);
+            self.window_state
+                .dialog_manager
+                .open_dialog(DialogType::SaveConfirm);
         } else {
             self.execute_close_action(action, event_loop);
         }

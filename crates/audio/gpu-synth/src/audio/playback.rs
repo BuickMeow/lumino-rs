@@ -396,7 +396,9 @@ impl AudioPlayback {
                 let stream = match device.build_output_stream(
                     &stream_config,
                     move |data: &mut [f32], _info: &cpal::OutputCallbackInfo| {
-                        cb_stats.last_request_samples.store(data.len() as i64, Ordering::SeqCst);
+                        cb_stats
+                            .last_request_samples
+                            .store(data.len() as i64, Ordering::SeqCst);
                         let mut i = 0;
                         while i < data.len() {
                             if next_pos >= next_block.len() {
@@ -465,7 +467,7 @@ impl AudioPlayback {
             Err(_) => {
                 return Err(SynthError::Gpu(
                     "audio stream thread terminated during startup".into(),
-                ))
+                ));
             }
         }
 

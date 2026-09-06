@@ -4,7 +4,6 @@ use std::time::Instant;
 use super::super::super::commands::ControlCommand;
 use super::super::super::export_pipeline::ExportPipeline;
 use super::super::super::params::RenderParams;
-use crate::ArrangementNoteUniform;
 use super::super::commands::process_commands;
 use super::super::render_pass::update_stats;
 use super::context::{
@@ -15,6 +14,7 @@ use super::deferred::handle_deferred_command;
 use super::onion_segments::{OnionSegment, apply_onion_track_delta, process_main_track_events};
 use super::preview::{ensure_offscreen_textures_and_upload_notes, render_offscreen_pass};
 use super::video_export::advance_export_inflight;
+use crate::ArrangementNoteUniform;
 use crate::gpu_resource_tracker::TrackedTexture;
 use lumino_midiplayer::texture_waterfall::{
     WaterfallGpuCtx, WaterfallStreamMsg, drain_waterfall_stream,
@@ -102,6 +102,7 @@ pub fn run_render_thread(ctx: RenderContext, channels: RenderThreadChannels) {
                 waterfall_renderer: &mut waterfall_renderer,
                 miditrail_renderer: &mut miditrail_renderer,
                 texture_waterfall_result_tx: &texture_waterfall_result_tx,
+                onion_streaming_in_progress: onion_skin_streaming_in_progress,
             },
             &mut deferred,
         );
@@ -274,6 +275,8 @@ fn drain_onion_skin_stream(
                         .onion_skin
                         .finish_streaming_upload(&ctx.device, &ctx.queue);
                     *onion_skin_streaming_in_progress = false;
+                    // 全量会话结束 → 常驻数据换代，派生索引（全局桶）必须重建。
+                    renderers.onion_epoch = renderers.onion_epoch.wrapping_add(1);
                     let total_gpu_mb =
                         lumino_diagnostics::memtrace::Snapshot::capture().total_with_gpu_mb();
                     tracing::debug!(
@@ -431,4 +434,3 @@ fn prepare_arrangement_note_data(params: &mut RenderParams) {
         _pad: [0.0, 0.0],
     };
 }
-

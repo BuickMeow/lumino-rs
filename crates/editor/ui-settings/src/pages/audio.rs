@@ -112,8 +112,10 @@ pub fn view<'a>(settings: &'a SettingsPanel) -> Element<'a> {
     ];
 
     // 内置合成器引擎子下拉（与 xsynth-realtime 共用同一列表）
-    let show_builtin_engine =
-        matches!(settings.synth.backend, SynthBackend::XSynth | SynthBackend::Lgs);
+    let show_builtin_engine = matches!(
+        settings.synth.backend,
+        SynthBackend::XSynth | SynthBackend::Lgs
+    );
     let builtin_engine_options = vec![
         LocalizedBuiltinEngine::new(SynthBackend::XSynth, settings.display.language),
         LocalizedBuiltinEngine::new(SynthBackend::Lgs, settings.display.language),
@@ -368,10 +370,13 @@ fn render_lgs_options<'a>(
     let block_index = ((settings.synth.lgs_block_size as f64).log2().round() as usize).clamp(6, 13);
     col = col.push(
         row![
-            text(format!("{}: {}", t.lgs_buffer, settings.synth.lgs_block_size))
-                .size(TEXT_SIZE_CONTENT)
-                .style(create_content_text_style())
-                .width(200.0),
+            text(format!(
+                "{}: {}",
+                t.lgs_buffer, settings.synth.lgs_block_size
+            ))
+            .size(TEXT_SIZE_CONTENT)
+            .style(create_content_text_style())
+            .width(200.0),
             iced_widget::slider(6.0..=13.0, block_index as f32, |i| {
                 Message::Settings(crate::Event::LgsBlockSizeChanged(1usize << i as u32))
             })
@@ -429,11 +434,9 @@ fn render_lgs_options<'a>(
             .size(TEXT_SIZE_CONTENT)
             .style(create_content_text_style())
             .width(180.0),
-            iced_widget::slider(
-                0..=127,
-                settings.synth.lgs_velocity_filter_threshold,
-                |v| Message::Settings(crate::Event::LgsVelocityFilterChanged(v)),
-            )
+            iced_widget::slider(0..=127, settings.synth.lgs_velocity_filter_threshold, |v| {
+                Message::Settings(crate::Event::LgsVelocityFilterChanged(v))
+            },)
             .step(1)
             .width(200.0),
         ]
@@ -470,8 +473,8 @@ fn render_winmm_output_selector<'a>(
         .size(TEXT_SIZE_CONTENT)
         .style(create_content_text_style());
 
-    let refresh_btn = iced_widget::button(t.refresh)
-        .on_press(Message::Settings(crate::Event::ScanWinmmOutputs));
+    let refresh_btn =
+        iced_widget::button(t.refresh).on_press(Message::Settings(crate::Event::ScanWinmmOutputs));
 
     let body: Element<'a> = if settings.midi.winmm_outputs.is_empty() {
         row![
@@ -493,17 +496,14 @@ fn render_winmm_output_selector<'a>(
             .iter()
             .map(|(_, name)| name.as_str())
             .collect();
-        let selected = settings
-            .midi
-            .selected_winmm_output
-            .and_then(|id| {
-                settings
-                    .midi
-                    .winmm_outputs
-                    .iter()
-                    .find(|(oid, _)| *oid == id)
-                    .map(|(_, name)| name.as_str())
-            });
+        let selected = settings.midi.selected_winmm_output.and_then(|id| {
+            settings
+                .midi
+                .winmm_outputs
+                .iter()
+                .find(|(oid, _)| *oid == id)
+                .map(|(_, name)| name.as_str())
+        });
 
         row![
             label,
@@ -552,8 +552,8 @@ fn render_audio_output_selector<'a>(
     t: &lumino_extras::i18n::SettingsTranslations,
 ) -> Element<'a> {
     let default_label = t.audio_output_default;
-    let refresh_btn = iced_widget::button(t.refresh)
-        .on_press(Message::Settings(crate::Event::ScanAudioOutputs));
+    let refresh_btn =
+        iced_widget::button(t.refresh).on_press(Message::Settings(crate::Event::ScanAudioOutputs));
 
     let body: Element<'a> = if settings.synth.audio_output_devices.is_empty() {
         row![

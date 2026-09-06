@@ -1,7 +1,6 @@
 use crate::{
     ArrangementNoteInstance, ArrangementNoteUniform, ArrangementUniform, CcBarInstance,
-    GridLineInstance, MiditrailNoteGpu, NoteInstance, RulerTickInstance, WaterfallNoteGpu,
-    miditrail_renderer::MiditrailViewMode,
+    GridLineInstance, NoteInstance, RulerTickInstance, miditrail_renderer::MiditrailViewMode,
 };
 
 mod builder;
@@ -88,13 +87,6 @@ pub struct RenderParams {
     pub is_waterfall_mode: bool,
     /// 瀑布流滚动速度
     pub waterfall_speed: f32,
-    /// 瀑布流 GPU 音符数据（仅在瀑布流模式下使用）
-    pub waterfall_notes: Vec<WaterfallNoteGpu>,
-    /// 瀑布流音符按 key 分桶的偏移表（129 个 u32：key i 的起始索引为
-    /// `waterfall_key_offsets[i]`，结束为 `waterfall_key_offsets[i+1]`）。
-    /// `waterfall_notes` 按 `(key, start_tick)` 升序排列，shader 借此实现
-    /// 每像素 O(1) 定位 + 二分回溯，避免 10W+ 密集音符时全量遍历。
-    pub waterfall_key_offsets: Vec<u32>,
     /// 瀑布流当前 MIDI tick 值（与 scroll.0 不同，scroll.0 是像素位置）
     pub waterfall_current_tick: u32,
     /// Miditrail 渲染开关（非 None 时走 Miditrail 3D GPU 渲染器）
@@ -103,12 +95,13 @@ pub struct RenderParams {
     pub miditrail_speed: f32,
     /// Miditrail 视图模式（Normal 普通 / Top 顶部，见 VIEW-001）
     pub miditrail_view_mode: MiditrailViewMode,
-    /// Miditrail GPU 音符数据
-    pub miditrail_notes: Vec<MiditrailNoteGpu>,
     /// Miditrail 当前 MIDI tick 值
     pub miditrail_current_tick: u32,
     /// Miditrail Z 方向显示距离（音符在多远被截断）。
     pub miditrail_z_far: f32,
+    /// Miditrail 3D 音符开关（默认 false = 平面）：true 还原盒子（12 三角形/音符），
+    /// false 只绘制朝向相机的单面（2 三角形/音符，6 倍几何削减）；实例/顺序/颜色零改动。
+    pub miditrail_3d_notes: bool,
     /// Miditrail 光晕环动画时间基准：当前 tick 处每秒 tick 数（BPM × ppq / 60）。
     ///
     /// 0 表示未知（由渲染线程回退到 120 BPM 估算），供非导出路径的默认参数使用。
@@ -165,15 +158,13 @@ impl Default for RenderParams {
             time_signatures: vec![(0, 4, 4)],
             is_waterfall_mode: false,
             waterfall_speed: 1.0,
-            waterfall_notes: Vec::new(),
-            waterfall_key_offsets: Vec::new(),
             waterfall_current_tick: 0,
             miditrail_enabled: false,
             miditrail_speed: 1.0,
             miditrail_view_mode: MiditrailViewMode::Normal,
-            miditrail_notes: Vec::new(),
             miditrail_current_tick: 0,
             miditrail_z_far: 7.5,
+            miditrail_3d_notes: false,
             miditrail_ticks_per_second: 0.0,
             fps: 60.0,
             skip_scene_render: false,

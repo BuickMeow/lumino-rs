@@ -254,7 +254,8 @@ impl ArrangementRenderer {
             device,
             &wgpu::BufferDescriptor {
                 label: Some("arrangement_note_visible_buffer"),
-                size: (INITIAL_VISIBLE_CAPACITY * std::mem::size_of::<u32>()) as wgpu::BufferAddress,
+                size: (INITIAL_VISIBLE_CAPACITY * std::mem::size_of::<u32>())
+                    as wgpu::BufferAddress,
                 usage: wgpu::BufferUsages::STORAGE
                     | wgpu::BufferUsages::VERTEX
                     | wgpu::BufferUsages::COPY_DST,

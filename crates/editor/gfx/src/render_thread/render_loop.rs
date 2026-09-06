@@ -33,6 +33,9 @@ pub struct Renderers {
     pub arrangement: crate::ArrangementRenderer,
     /// CC 柱状条渲染器
     pub cc_bar: crate::CcBarRenderer,
+    /// 洋葱皮常驻数据世代计数（MIDI 全量重载 / TrackDelta 增量变更时递增，
+    /// 全局桶等派生索引据此判定重建；单调递增，wrapping）。
+    pub onion_epoch: u64,
 }
 
 impl Renderers {
@@ -46,6 +49,7 @@ impl Renderers {
             ruler: crate::RulerRenderer::new(device, format),
             arrangement: crate::ArrangementRenderer::new(device, format),
             cc_bar: crate::CcBarRenderer::new(device, format),
+            onion_epoch: 0,
         }
     }
 
@@ -63,6 +67,7 @@ impl Renderers {
             ruler: crate::RulerRenderer::new_without_depth(device, format),
             arrangement: crate::ArrangementRenderer::new_without_depth(device, format),
             cc_bar: crate::CcBarRenderer::new_without_depth(device, format),
+            onion_epoch: 0,
         }
     }
 }

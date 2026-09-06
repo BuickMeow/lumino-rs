@@ -3,7 +3,7 @@
 //! 分解 `render_settings_section` 为多个 ≤50 行的子函数。
 
 use iced_core::{Alignment, Length};
-use iced_widget::{column, container, row, scrollable, slider, space, text, text_input};
+use iced_widget::{checkbox, column, container, row, scrollable, slider, space, text, text_input};
 
 use crate::message::{Message, VideoExportAction};
 use crate::view::widgets;
@@ -32,6 +32,7 @@ fn render_settings_section<'a>(
         waterfall_speed_slider_row(state, palette),
         miditrail_view_mode_row(state, palette),
         miditrail_z_far_slider_row(state, palette),
+        miditrail_3d_notes_checkbox_row(state, palette),
         space().height(8),
         resolution_input_row(state, palette),
         pick_list_row(
@@ -286,7 +287,21 @@ fn miditrail_z_far_slider_row<'a>(
     }
 }
 
-/// 分辨率输入行
+/// MIDITrail 3D 音符开关（仅 MIDITrail 时显示；默认关 = 平面，12→2 三角形/音符）。
+fn miditrail_3d_notes_checkbox_row<'a>(
+    state: &'a VideoExportDialogState,
+    palette: &'a iced_core::theme::palette::Extended,
+) -> crate::Element<'a> {
+    if state.render_mode == "MIDITrail" {
+        checkbox(state.miditrail_3d_notes)
+            .label("3D 音符（盒子，关闭则为平面）")
+            .on_toggle(|v| Message::VideoExport(VideoExportAction::Miditrail3DNotesChanged(v)))
+            .style(widgets::dialog_checkbox_style(palette))
+            .into()
+    } else {
+        space().height(0).into()
+    }
+}
 fn resolution_input_row<'a>(
     state: &'a VideoExportDialogState,
     palette: &'a iced_core::theme::palette::Extended,

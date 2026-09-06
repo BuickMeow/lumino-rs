@@ -68,6 +68,8 @@ pub struct VideoExportDialogState {
     pub miditrail_top_speed: f32,
     /// MIDITrail Z 方向显示距离（默认 7.5，精度 0.1）
     pub miditrail_z_far: f32,
+    /// MIDITrail 3D 音符开关（默认 false = 平面；true 还原盒子）
+    pub miditrail_3d_notes: bool,
     // ── 计数器设置（参考 Zenith-MIDI NoteCountRender 设置面板） ──
     /// 计数器文本模板
     pub counter_text: String,
@@ -212,6 +214,7 @@ impl VideoExportDialogState {
             miditrail_normal_speed: MIDITRAIL_SPEED_DEFAULT,
             miditrail_top_speed: MIDITRAIL_SPEED_DEFAULT,
             miditrail_z_far: MIDITRAIL_Z_FAR_DEFAULT,
+            miditrail_3d_notes: false,
             counter_text: COUNTER_DEFAULT_TEXT.to_string(),
             counter_editor: iced_widget::text_editor::Content::<iced_wgpu::Renderer>::default(),
             counter_alignment: "左上".to_string(),

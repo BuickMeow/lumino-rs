@@ -200,7 +200,12 @@ impl Host {
 
         // 各泳道可见性（静音/隐藏）与 side bar 对齐；非走带模式为空
         let arrangement_track_visible: Vec<bool> = if self.root.is_arrangement_mode() {
-            self.root.sidebar.tracks.iter().map(|t| !t.is_muted).collect()
+            self.root
+                .sidebar
+                .tracks
+                .iter()
+                .map(|t| !t.is_muted)
+                .collect()
         } else {
             Vec::new()
         };

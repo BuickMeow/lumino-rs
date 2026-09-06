@@ -49,6 +49,8 @@ pub enum VideoExportAction {
     MiditrailTopSpeedChanged(f32),
     /// MIDITrail Z 方向显示距离变更（0.1~15.0，精度 0.1）
     MiditrailZFarChanged(f32),
+    /// MIDITrail 3D 音符开关变更（true=盒子，false=平面默认）
+    Miditrail3DNotesChanged(bool),
 
     // ── 计数器设置变更（参考 Zenith-MIDI NoteCountRender 设置面板） ──
     /// 计数器文本模板编辑（iced text_editor 动作，Handler 内 perform 并同步文本）

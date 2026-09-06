@@ -129,7 +129,10 @@ fn test_pointer_pressed_ctrl_via_canvas_message_triggers_copy_when_window_channe
     test_helpers::seed_notes(&mut editor, 1, 0, &[Note::new(0.0, 60, 480.0)]);
     editor.selection_insert(0);
     // 关键：不调用 set_ctrl_pressed(true)，模拟窗口级 Ctrl 通道失效
-    assert!(!editor.ctrl_pressed(), "前置：窗口级 ctrl 通道应处于失效状态");
+    assert!(
+        !editor.ctrl_pressed(),
+        "前置：窗口级 ctrl 通道应处于失效状态"
+    );
 
     let center = selection_box_center(&editor);
     // 通过 EditorAction::Pressed 携带 canvas 可靠检测到的 ctrl（窗口通道为 false）

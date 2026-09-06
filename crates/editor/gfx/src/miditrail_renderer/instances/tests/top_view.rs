@@ -53,7 +53,8 @@ fn build_all(
 ) -> Vec<MiditrailInstanceGpu> {
     let (positions, widths) = layout();
     let mut out = Vec::new();
-    build_note_instances(uniform, notes, &positions, &widths, &mut out);
+    let mut scratch = NoteBuildScratch::default();
+    build_note_instances(uniform, notes, &positions, &widths, &mut out, &mut scratch);
     out
 }
 

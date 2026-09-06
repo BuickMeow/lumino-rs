@@ -348,8 +348,7 @@ impl Program<Message, Theme, Renderer> for VerticalRollGrid<'_> {
         if let Some(geom) = crate::grid::line_tool_box::draw(self.editor, renderer, theme, bounds) {
             geometries.push(geom);
         }
-        if let Some(geom) =
-            crate::grid::shape_tool_box::draw(self.editor, renderer, theme, bounds)
+        if let Some(geom) = crate::grid::shape_tool_box::draw(self.editor, renderer, theme, bounds)
         {
             geometries.push(geom);
         }

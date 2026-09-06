@@ -4,7 +4,7 @@ use lumino_gfx::RenderParams;
 
 use super::{
     NoteRectangleParamsInput, NoteRectangleRenderInput, SortableNote,
-    build_note_rectangle_params_from_visible, note_search_bounds,
+    build_note_rectangle_params_from_visible,
 };
 
 /// NoteRectangle 模式：传统 GPU 音符矩形渲染
@@ -17,21 +17,15 @@ pub(crate) fn build_note_rectangle_render_params(input: NoteRectangleRenderInput
         ppq,
         visible_notes,
         note_instances_out,
+        collect_all,
     } = input;
-    // 视频导出始终使用标准 128 键 MIDI 键盘
-    let viewport_tick_span = (ppq * 16).max(1) as f32;
-    let tick_start = tick;
-    let tick_end = tick.saturating_add(viewport_tick_span as u32);
-
-    // 每轨按 start_tick 有序 → 二分窗口定位，避免每帧 O(N) 全量遍历
+    // 首帧全量收集（一次上传常驻 GPU）；后续帧跳过收集，裁剪走 GPU cull。
+    // 注：视口缩放由共享函数按 tick 重算，此处无需窗口。
     visible_notes.clear();
-    for (track_idx, track_notes) in document.notes.iter().enumerate() {
-        if track_notes.is_empty() {
-            continue;
-        }
-        let (_, search_end) = note_search_bounds(track_notes, tick_start, tick_end);
-        for n in track_notes.iter().take(search_end) {
-            if n.end_tick >= tick_start && n.start_tick <= tick_end {
+    note_instances_out.clear();
+    if collect_all {
+        for (track_idx, track_notes) in document.notes.iter().enumerate() {
+            for n in track_notes.iter() {
                 visible_notes.push(SortableNote {
                     key: n.key,
                     start_tick: n.start_tick,

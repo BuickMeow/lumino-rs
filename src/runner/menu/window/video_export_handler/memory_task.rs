@@ -33,6 +33,7 @@ struct MemoryEnqueueCtx<'a> {
     height: u32,
     key_count: u16,
     is_cpu_renderer: bool,
+    is_gpu_compute_style: bool,
     render_mode: RenderMode,
     counter_config: &'a Option<CounterRenderConfig>,
     counter_stats: &'a mut Option<CounterStats>,
@@ -47,6 +48,7 @@ struct MemoryEnqueueCtx<'a> {
     miditrail_view_mode: MiditrailViewMode,
     miditrail_normal_speed: f32,
     miditrail_top_speed: f32,
+    miditrail_3d_notes: bool,
     frame_tx_waterfall: &'a Sender<Vec<u8>>,
     progress_tx: &'a UnboundedSender<ProgressMsg>,
     key_colors: &'a mut [u8; keyboard::KEY_COLOR_BYTES],
@@ -54,6 +56,10 @@ struct MemoryEnqueueCtx<'a> {
     csv_writer: &'a mut Option<BufWriter<std::fs::File>>,
     visible_note_buf: &'a mut Vec<SortableNote>,
     note_instances_buf: &'a mut Vec<lumino_gfx::NoteInstance>,
+    /// 首帧全量上传标记：首帧收集全文档音符常驻 GPU，后续帧跳过收集（uniform 驱动重裁剪）。
+    notes_uploaded: &'a mut bool,
+    /// 瀑布流/MIDITrail 窗口收集滑动状态（同一导出任务内复用，tick 单调递增）。
+    window_state: &'a mut video_export::WindowCollectState,
 }
 
 /// 内存模式单帧入队（原 `run_video_export_task` 内嵌 `enqueue_frame` 闭包抽出的自由函数）。
@@ -70,13 +76,18 @@ fn enqueue_memory_frame(
     let tempo_changes = &ctx.document.tempo_changes;
     let tick = video_export::seconds_to_tick(time_sec, tempo_changes, ctx.ppq);
 
-    // 根据当前播放 tick 增量计算按键高亮颜色
-    video_export::keyboard::update_playback_key_colors(
-        ctx.document,
-        tick,
-        ctx.key_color_state,
-        ctx.key_colors,
-    );
+    // 根据当前播放 tick 增量计算按键高亮颜色（仅钢琴卷帘合成路径消费）。
+    // GPU compute（瀑布流/MIDITrail）与 CPU 渲染（计数器等）走 FrameParams::default()
+    // + 空键盘贴图，key_colors 无人读取——跳过整次增量扫描（含每轨 O(前缀) skip），
+    // 高数据量下这是每帧数十毫秒的死工作（见 recv=20~63ms 根因）。
+    if !ctx.is_cpu_renderer && !ctx.is_gpu_compute_style {
+        video_export::keyboard::update_playback_key_colors(
+            ctx.document,
+            tick,
+            ctx.key_color_state,
+            ctx.key_colors,
+        );
+    }
 
     // 计算 scroll_x / zoom_x，用于标尺小节号合成
     let video_kb_width = 60.0f32;
@@ -93,24 +104,17 @@ fn enqueue_memory_frame(
         key_colors: *ctx.key_colors,
     });
 
-    // 瀑布流/计数器模式（CPU 端渲染）：绕过 GPU compute shader + readback 开销
-    // 参考 Zenith-MIDI 和 fmr 的视频导出策略——CPU 渲染直出 BGRA，无需 GPU 管线参与。
-    // waterfall.wgsl compute shader 每像素扫描所有音符(O(notes×pixels))，
-    // GPU→CPU 回读(staging buffer)引入额外延迟，而 CPU 路径仅需 O(visible_notes)。
+    // 计数器/数据曲线/MidiConsole 模式（CPU 端渲染）：绕过 GPU 开销，BGRA 直出。
+    // 注：瀑布流走 GPU compute 管线（见 RenderMode::Waterfall 的 GPU 分支），此处无 CPU 分支。
     if ctx.is_cpu_renderer {
         let mut frame_data = vec![0u8; (ctx.width as usize) * (ctx.height as usize) * 4];
         match ctx.render_mode {
             RenderMode::Waterfall => {
-                video_export::render_waterfall_frame(video_export::WaterfallFrameInput {
-                    frame: &mut frame_data,
-                    frame_width: ctx.width,
-                    frame_height: ctx.height,
-                    document: ctx.document,
-                    tick,
-                    ppq: ctx.ppq,
-                    key_count: ctx.key_count,
-                    waterfall_speed: ctx.waterfall_scroll_speed,
-                });
+                send_export_error(
+                    ctx.progress_tx,
+                    "导出失败：Waterfall 模式不应进入 CPU 渲染分支（内部错误）",
+                );
+                return true;
             }
             RenderMode::NoteCounter => {
                 // 计数器模式：统计推进 + 文本模板渲染（无卷帘/键盘/标尺）
@@ -300,6 +304,7 @@ fn enqueue_memory_frame(
             return true;
         }
     } else {
+        let collect_all = !*ctx.notes_uploaded;
         let Some(params) =
             video_export::build_video_export_render_params(video_export::RenderParamsInput {
                 width: ctx.width,
@@ -314,9 +319,12 @@ fn enqueue_memory_frame(
                 miditrail_view_mode: ctx.miditrail_view_mode,
                 miditrail_normal_speed: ctx.miditrail_normal_speed,
                 miditrail_top_speed: ctx.miditrail_top_speed,
+                miditrail_3d_notes: ctx.miditrail_3d_notes,
                 fps: ctx.fps_f64 as f32,
                 visible_notes: ctx.visible_note_buf,
                 note_instances_out: ctx.note_instances_buf,
+                collect_all,
+                window_state: ctx.window_state,
             })
         else {
             send_export_error(
@@ -325,6 +333,8 @@ fn enqueue_memory_frame(
             );
             return true;
         };
+        // 首帧全量数据已随本帧发出，后续帧只发 uniforms，复用 GPU 常驻数据。
+        *ctx.notes_uploaded = true;
 
         if ctx
             .cmd_sender
@@ -365,6 +375,7 @@ pub(super) struct RunVideoExportTaskInput {
     pub miditrail_view_mode: MiditrailViewMode,
     pub miditrail_normal_speed: f32,
     pub miditrail_top_speed: f32,
+    pub miditrail_3d_notes: bool,
     pub render_mode: RenderMode,
     pub counter_config: Option<CounterRenderConfig>,
     pub data_curve_config: Option<DataCurveRenderConfig>,
@@ -392,6 +403,7 @@ pub(super) fn run_video_export_task(input: RunVideoExportTaskInput) {
         miditrail_view_mode,
         miditrail_normal_speed,
         miditrail_top_speed,
+        miditrail_3d_notes,
         render_mode,
         counter_config,
         data_curve_config,
@@ -538,6 +550,10 @@ pub(super) fn run_video_export_task(input: RunVideoExportTaskInput) {
     // 复用缓冲区避免每帧堆分配
     let mut visible_note_buf: Vec<SortableNote> = Vec::with_capacity(4096);
     let mut note_instances_buf: Vec<lumino_gfx::NoteInstance> = Vec::with_capacity(4096);
+    // 首帧全量上传标记（GPU 常驻后后续帧只发 uniforms）
+    let mut notes_uploaded = false;
+    // 窗口收集滑动状态（瀑布流/MIDITrail 同一任务内复用）
+    let mut window_state = video_export::WindowCollectState::default();
 
     // 闭包不捕获 param_queue，而是作为参数传入，避免与主循环中的 pop_front 产生可变借用冲突。
     let mut ctx = MemoryEnqueueCtx {
@@ -549,6 +565,7 @@ pub(super) fn run_video_export_task(input: RunVideoExportTaskInput) {
         height,
         key_count,
         is_cpu_renderer,
+        is_gpu_compute_style,
         render_mode,
         counter_config: &counter_config,
         counter_stats: &mut counter_stats,
@@ -563,6 +580,7 @@ pub(super) fn run_video_export_task(input: RunVideoExportTaskInput) {
         miditrail_view_mode,
         miditrail_normal_speed,
         miditrail_top_speed,
+        miditrail_3d_notes,
         frame_tx_waterfall: &frame_tx_waterfall,
         progress_tx: &progress_tx,
         key_colors: &mut key_colors,
@@ -570,6 +588,8 @@ pub(super) fn run_video_export_task(input: RunVideoExportTaskInput) {
         csv_writer: &mut csv_writer,
         visible_note_buf: &mut visible_note_buf,
         note_instances_buf: &mut note_instances_buf,
+        notes_uploaded: &mut notes_uploaded,
+        window_state: &mut window_state,
     };
     let mut enqueue_frame = |queue: &mut EncodeFrameQueue, frame_idx: u64| -> bool {
         enqueue_memory_frame(&mut ctx, queue, frame_idx)
@@ -652,6 +672,7 @@ pub(super) fn run_video_export_task(input: RunVideoExportTaskInput) {
         ));
     }
     finalize_video_export(
+        &cmd_sender,
         encoder,
         cancelled,
         elapsed,

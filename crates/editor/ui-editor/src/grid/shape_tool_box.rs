@@ -11,8 +11,8 @@ use crate::grid::confirm_buttons::{BUTTON_SIZE, CANCEL_ICON, CONFIRM_ICON, draw_
 use crate::grid::utils::content_bounds;
 use iced_core::{Color, Point, Rectangle, Size};
 use iced_widget::canvas::{self, Geometry, Path, Stroke};
-use lumino_editor_state::shape_tool::{effective_rect, shape_vertices};
 use lumino_editor_state::ShapeKind;
+use lumino_editor_state::shape_tool::{effective_rect, shape_vertices};
 use lumino_ui_core::Renderer;
 
 /// 填充色块透明度（半透明叠加在网格上，√ 确认后成为实心音符）

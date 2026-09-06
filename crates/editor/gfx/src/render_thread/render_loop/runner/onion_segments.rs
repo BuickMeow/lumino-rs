@@ -183,6 +183,8 @@ pub fn apply_onion_track_delta(
         renderers
             .onion_skin
             .write_segment(segments[idx].offset, instances);
+        // 常驻字节变更 → 换代（全局桶重建）。
+        renderers.onion_epoch = renderers.onion_epoch.wrapping_add(1);
         return true;
     }
 
@@ -226,6 +228,9 @@ pub fn apply_onion_track_delta(
 
     // 5. cull info（count 变化 → 重建 bind group；did_grow 时 buffer 句柄变化也会重建）
     renderers.onion_skin.update_cull_info(device, queue);
+
+    // 常驻字节变更（搬移/写段）→ 换代（全局桶重建）。
+    renderers.onion_epoch = renderers.onion_epoch.wrapping_add(1);
 
     tracing::debug!(
         "OnionSkin: TrackDelta track={} {} 实例 (原 {} 实例，{}) → 增量完成",

@@ -112,6 +112,7 @@ pub(crate) fn build_video_config(
         miditrail_normal_speed: st.miditrail_normal_speed.max(0.1),
         miditrail_top_speed: st.miditrail_top_speed.max(0.1),
         miditrail_z_far: st.miditrail_z_far,
+        miditrail_3d_notes: st.miditrail_3d_notes,
         note_counter: NoteCounterConfig {
             text: st.counter_text.clone(),
             alignment: parse_enum_or_log(&st.counter_alignment, "counter_alignment"),

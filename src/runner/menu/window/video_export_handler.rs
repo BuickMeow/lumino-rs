@@ -11,13 +11,14 @@ use lumino_gfx::TextureFormat;
 use lumino_message::events::window::video::VideoExportConfig as EventVideoExportConfig;
 
 use memory_task::{RunVideoExportTaskInput, run_video_export_task};
-use streaming_task::{RunStreamingVideoExportTaskInput, run_streaming_video_export_task};
 
 mod commands;
 mod composite;
 mod frame;
 mod memory_task;
 mod pipeline;
+/// 流式导出已暂时禁用（数据源统一期间保留代码供后续重做，见分支内 TODO）。
+#[allow(dead_code)]
 mod streaming_task;
 
 impl RunnerInner {
@@ -28,7 +29,7 @@ impl RunnerInner {
     ) {
         let EventVideoExportConfig {
             output_path,
-            midi_path,
+            midi_path: _midi_path,
             width,
             height,
             fps,
@@ -44,6 +45,7 @@ impl RunnerInner {
             miditrail_view_mode,
             miditrail_normal_speed,
             miditrail_top_speed,
+            miditrail_3d_notes,
             note_counter,
             data_curve,
             midi_console,
@@ -186,7 +188,9 @@ impl RunnerInner {
                     render_mode,
                     lumino_message::events::window::video::RenderMode::NoteCounter
                 ) {
-                    Some(super::video_export::CounterRenderConfig::from(&note_counter))
+                    Some(super::video_export::CounterRenderConfig::from(
+                        &note_counter,
+                    ))
                 } else {
                     None
                 };
@@ -195,7 +199,9 @@ impl RunnerInner {
                     render_mode,
                     lumino_message::events::window::video::RenderMode::DataCurve
                 ) {
-                    Some(super::video_export::DataCurveRenderConfig::from(&data_curve))
+                    Some(super::video_export::DataCurveRenderConfig::from(
+                        &data_curve,
+                    ))
                 } else {
                     None
                 };
@@ -204,7 +210,9 @@ impl RunnerInner {
                     render_mode,
                     lumino_message::events::window::video::RenderMode::MidiConsole
                 ) {
-                    Some(super::video_export::MidiConsoleRenderConfig::from(&midi_console))
+                    Some(super::video_export::MidiConsoleRenderConfig::from(
+                        &midi_console,
+                    ))
                 } else {
                     None
                 };
@@ -235,37 +243,20 @@ impl RunnerInner {
                         miditrail_view_mode,
                         miditrail_normal_speed,
                         miditrail_top_speed,
+                        miditrail_3d_notes,
                         render_mode,
                         counter_config,
                         data_curve_config,
                         midi_console_config,
                     });
-                } else if !midi_path.is_empty() {
-                    if is_cpu_renderer {
-                        tracing::error!("计数器/数据曲线/MidiConsole 模式需要完整 MIDI 数据，流式读取不支持");
-                        let _ = progress_tx.send((
-                            "导出失败：计数器/数据曲线/MidiConsole 模式需要完整 MIDI 数据，请先加载工程或指定 MIDI 数据源"
-                                .to_string(),
-                            -1.0,
-                            0,
-                            0.0,
-                            0.0,
-                        ));
-                    } else {
-                        run_streaming_video_export_task(RunStreamingVideoExportTaskInput {
-                            config,
-                            cmd_sender,
-                            progress_tx,
-                            preview_tx,
-                            midi_path,
-                            fps_f64,
-                            key_count,
-                            width,
-                            height,
-                            cancel_flag,
-                            input_pix_fmt: surface_pix_fmt,
-                        });
-                    }
+                } else if !_midi_path.is_empty() {
+                    // TODO(数据源统一): 流式读取模式视频导出已暂时禁用，后续基于
+                    // 单一权威数据源（GpuNoteBuffer / note_instances）重做流式路径。
+                    tracing::error!("视频导出失败：流式读取模式已暂时禁用，请先加载工程");
+                    send_export_error(
+                        &progress_tx,
+                        "导出失败：流式读取模式已暂时禁用，请先加载工程",
+                    );
                 } else {
                     tracing::error!("视频导出失败：无 MidiDocument 且未指定 MIDI 路径");
                     send_export_error(&progress_tx, "导出失败：无 MIDI 数据");

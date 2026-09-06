@@ -64,7 +64,15 @@ fn test_note_instances_sort_key_equivalent() {
     );
     // 新实现
     let mut actual_instances = Vec::new();
-    build_note_instances(&uniform, &notes, &positions, &widths, &mut actual_instances);
+    let mut scratch = NoteBuildScratch::default();
+    build_note_instances(
+        &uniform,
+        &notes,
+        &positions,
+        &widths,
+        &mut actual_instances,
+        &mut scratch,
+    );
 
     assert_eq!(
         expected_instances.len(),
@@ -84,6 +92,28 @@ fn test_note_instances_sort_key_equivalent() {
         assert_eq!(a.color_packed, b.color_packed, "第 {i} 个实例颜色不一致");
         assert_eq!(a.is_key, b.is_key, "第 {i} 个实例 is_key 不一致");
     }
+}
+
+/// radix 与 `sort_by_key` 大 N 等价性：5 万条目（含大量重复键测稳定性），
+/// 输出下标序列必须逐元素一致。
+#[test]
+fn test_radix_sort_order_matches_stable_sort() {
+    // 确定性伪随机（含重复键，覆盖稳定性路径）。
+    let mut state = 0x1234_5678_9ABCu64;
+    let mut next = move || {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        state
+    };
+    let n = 50_000usize;
+    let mut order: Vec<(u64, u32)> = (0..n as u32).map(|i| (next() % 10_000, i)).collect();
+    let mut expected = order.clone();
+    expected.sort_by_key(|(k, _)| *k);
+    let mut tmp = Vec::new();
+    let mut hist = Vec::new();
+    super::super::radix_sort_order(&mut order, &mut tmp, &mut hist);
+    assert_eq!(order, expected, "radix 输出必须与稳定排序逐元素一致");
 }
 
 /// 旧三键闭包排序的参考实现（用于等价性回归测试）。

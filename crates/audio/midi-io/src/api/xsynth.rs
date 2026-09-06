@@ -3,12 +3,12 @@ use std::sync::atomic::AtomicU32;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+use cpal::traits::DeviceTrait;
 use xsynth_core::{
     AudioStreamParams, ChannelCount,
     channel::{ChannelAudioEvent, ChannelConfigEvent, ChannelEvent},
     soundfont::SoundfontBase,
 };
-use cpal::traits::DeviceTrait;
 
 use crate::realtime::{
     ChannelMixHandle, RealtimeEventSender, RealtimeSynth, StreamRestartError, SynthEvent,

@@ -23,7 +23,15 @@ fn test_build_instances() {
     let active_keys = compute_active_keys(uniform.tick, &notes);
     let press_factors = [0.0f32; 128];
     let mut out = Vec::new();
-    build_note_instances(&uniform, &notes, &positions, &widths, &mut out);
+    let mut scratch = NoteBuildScratch::default();
+    build_note_instances(
+        &uniform,
+        &notes,
+        &positions,
+        &widths,
+        &mut out,
+        &mut scratch,
+    );
     build_key_instances(
         &uniform,
         &active_keys,

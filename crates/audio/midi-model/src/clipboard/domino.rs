@@ -20,9 +20,9 @@ use crate::note_event::NoteEvent;
 
 use std::io::{Read, Write};
 
+use flate2::Compression;
 use flate2::read::ZlibDecoder;
 use flate2::write::ZlibEncoder;
-use flate2::Compression;
 use tracing::warn;
 
 /// 剪贴板载荷固定头。

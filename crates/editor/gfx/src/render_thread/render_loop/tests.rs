@@ -86,6 +86,10 @@ fn test_miditrail_shader_valid() {
         include_str!("../../shaders/miditrail_aura.wgsl"),
         "miditrail_aura",
     );
+    validate_wgsl(
+        include_str!("../../shaders/miditrail_note_driven.wgsl"),
+        "miditrail_note_driven",
+    );
 }
 
 #[test]
